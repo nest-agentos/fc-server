@@ -1,0 +1,5 @@
+/target/
+/build/
+/images/
+/config.toml
+__pycache__/

@@ -1,0 +1,16 @@
+[Unit]
+Description=MindOS Firecracker isolation service
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/mindos-firecracker/environment
+ExecStart=/usr/local/bin/firecracker-server serve /etc/mindos-firecracker/config.toml
+ExecStopPost=/usr/local/libexec/mindos-firecracker/publish-ports.py reset
+KillMode=control-group
+TimeoutStopSec=120
+UMask=0077
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target
