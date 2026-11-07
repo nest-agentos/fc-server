@@ -11,8 +11,27 @@ use tokio::sync::{Mutex, Semaphore};
 fn main() -> Result<()> {
     tracing_subscriber::fmt().json().with_writer(std::io::stderr).init();
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args.first().is_some_and(|s| s == "service" || s == "list") {
-        return host_command(&args);
+    let program = std::env::args_os().next().unwrap_or_default();
+    if let Some(kind @ ("publish-ports" | "proxy-egress")) =
+        Path::new(&program).file_name().and_then(|s| s.to_str())
+    {
+        return firecracker_server::host::helper(kind, args.first().is_some_and(|s| s == "reset"));
+    }
+    if args.first().is_some_and(|s| {
+        matches!(
+            s.as_str(),
+            "service"
+                | "list"
+                | "network"
+                | "start"
+                | "stop"
+                | "reboot"
+                | "publish"
+                | "unpublish"
+                | "ports"
+        )
+    }) {
+        return firecracker_server::host::dispatch(&args);
     }
     if args.first().is_some_and(|s| s == "__supervise-fs") && args.len() > 6 {
         firecracker_server::mount_namespace::attach(
@@ -24,32 +43,13 @@ fn main() -> Result<()> {
     tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(dispatch(args))
 }
 
-fn host_command(args: &[String]) -> Result<()> {
-    use std::os::unix::process::CommandExt;
-    let listing = args[0] == "list";
-    let helper = Path::new(if listing {
-        "/usr/local/libexec/mindos-firecracker/service-list.py"
-    } else {
-        "/usr/local/libexec/mindos-firecracker/service-environment.py"
-    });
-    config::trusted(helper)?;
-    let mut command = if listing && unsafe { libc::geteuid() } != 0 {
-        let mut sudo = std::process::Command::new("/usr/bin/sudo");
-        sudo.args(["--", "/usr/bin/python3"]);
-        sudo
-    } else {
-        std::process::Command::new("/usr/bin/python3")
-    };
-    Err(command.arg(helper).args(&args[1..]).exec().into())
-}
-
 async fn dispatch(args: Vec<String>) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("__supervise") if args.len() > 2 => firecracker_server::supervisor::run(args[1].parse()?, &args[2..].iter().map(std::ffi::OsString::from).collect::<Vec<_>>()).await,
         Some("__supervise-fs") if args.len() > 6 => firecracker_server::supervisor::run_backend(args[1].parse()?, Path::new(&args[2]), &args[6..].iter().map(std::ffi::OsString::from).collect::<Vec<_>>()).await,
         Some("serve") if args.len() == 2 => serve(Path::new(&args[1])).await,
         Some("connect") if args.len() == 4 => client(&args[1], &args[2], args[3].parse()?).await,
-        _ => anyhow::bail!("usage: firecracker-server list [--all] [--json] | serve CONFIG | service <install|setup|start|up|stop|destroy|status> ... | connect http://127.0.0.1:PORT VM_ID VSOCK_PORT; client key: FIRECRACKER_API_KEY"),
+        _ => anyhow::bail!("usage: firecracker-server list [--all] [--json] | reboot VM_ID | serve CONFIG | service <install|setup|start|up|stop|destroy|status> ... | connect http://127.0.0.1:PORT VM_ID VSOCK_PORT; client key: FIRECRACKER_API_KEY"),
     }
 }
 
@@ -122,6 +122,9 @@ fn load_key(config: &Config) -> Result<String> {
 
 async fn serve(path: &Path) -> Result<()> {
     let (config, _lock, key) = initialize(path)?;
+    firecracker_server::proxy::reset(&config).await.map_err(|e| {
+        anyhow::anyhow!("proxy egress initialization failed: {} ({})", e.code, e.stage)
+    })?;
     firecracker_server::publication::reset(&config).await.map_err(|e| {
         anyhow::anyhow!("port publisher initialization failed: {} ({})", e.code, e.stage)
     })?;
@@ -140,6 +143,7 @@ async fn serve(path: &Path) -> Result<()> {
         operations: BTreeMap::new(),
     }));
     let reaper = tokio::spawn(reap(shared.clone()));
+    firecracker_server::systemd::ready().context("management readiness notification failed")?;
     let result = axum::serve(listener, api::router(shared.clone(), &key))
         .with_graceful_shutdown(shutdown(shared.clone()))
         .await;

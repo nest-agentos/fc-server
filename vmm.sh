@@ -10,13 +10,13 @@ usage() {
 Usage: ./vmm.sh [COMMAND] [ARGS...]
 No command: show this help.
 
-  build    Build release server/fork, virtiofsd, guest kernel and Debian 13 ext4.
+  build [--os]  Build release server/fork and virtiofsd; --os also builds/packages kernel/rootfs.
   deps     Install Debian/Ubuntu host dependencies and rustup if missing.
   install  Deploy built artifacts, initial config, key and systemd unit as root.
   install-server  Build/deploy only server and host helpers; preserve all VM images/config.
-  setup    Run deps, build, install, check. Does not start/enable the service.
-  network  Prepare SSH key/image, per-VM egress NAT/DHCP/DNS, deploy, restart an idle server.
-  shared-root  Build/deploy shared read-only DAX base and private OverlayFS root; restart an idle server.
+  setup [--os]  Run deps, build, install, check. First installation needs --os.
+  network [--os]  Prepare SSH/NAT/DHCP/DNS, deploy, restart an idle server; --os updates guest OS.
+  shared-root [--os]  Deploy shared-root mode; --os builds guest OS, otherwise reuse existing assets.
   ssh ID   Log into a running VM as agent, with the dedicated local SSH key.
   ip ID    Print the private IPv4 address of a running VM.
   list [--all] [--json]  List running VMs; --all includes stopped services/retained roots.
@@ -25,6 +25,7 @@ No command: show this help.
   ports ID  List a VM's published TCP/UDP ports.
   start ID [DIRECTORY...]  Create a debian13 VM, optionally with authorized directory bindings.
   stop ID  Stop a VM; persistent roots/volumes are retained, temporary root disks deleted.
+  reboot ID  Restart a managed service VM, or recreate an ordinary VM and restore its ports.
   service <install|setup|start|up|stop|destroy|status> ...  Manage generic guest services.
   check    Check installed paths, config, KVM, cgroup v2 and namespace support.
   smoke    Run real KVM block-volume and virtio-fs acceptance with disposable fixtures.
@@ -36,7 +37,7 @@ Environment:
   FIRECRACKER_SOURCE  Fork checkout (default: ../fc-hp).
   BUILD_DIR          Artifact/cache directory (default: ./build).
   JOBS               Compiler parallelism (default: 8).
-  KERNEL_IMAGE       Use an existing compatible vmlinux instead of compiling.
+  KERNEL_IMAGE       With --os, use an existing compatible vmlinux instead of compiling.
   KERNEL_MIRROR      Kernel archive directory URL (default: kernel.org v6.x).
   VIRTIOFSD          Use an existing Rust virtiofsd supporting --readonly.
   IMAGE_SIZE_MIB     New Debian root disk size (default: 2048).
@@ -45,7 +46,7 @@ Environment:
   NODE_IMAGE         Pinned Node build image (default: node:24.22.1-trixie-slim).
   SSH_PUBLIC_KEY     Guest authorized public key (auto: ~/.ssh/mindos-firecracker.pub).
   FC_EGRESS_INTERFACE, FC_DNS_SERVERS  Optional NAT interface/public DNS overrides.
-  REBUILD_IMAGE=1    Replace the build output image after a successful rebuild.
+  REBUILD_IMAGE=1    With --os, force rebuilding the Debian image.
   DEBIAN_MIRROR, DEBIAN_SECURITY_MIRROR  Optional guest APT mirrors.
 EOF
 }
@@ -55,6 +56,13 @@ die() { log "result=failed reason=$*"; exit 1; }
 need() { command -v "$1" >/dev/null || die "missing $1; run ./vmm.sh deps"; }
 as_root() {
     if (( EUID == 0 )); then "$@"; else sudo -- "$@"; fi
+}
+
+host_cli() {
+    stage="runtime-${1:-command}"
+    local server=${FIRECRACKER_SERVER:-/usr/local/bin/firecracker-server}
+    [[ -x $server ]] || die 'install the Rust runtime first with ./vmm.sh setup --os'
+    as_root "$server" "$@"
 }
 
 init() {
@@ -207,25 +215,64 @@ build_image() {
     rmdir -- "$pending"
 }
 
-build_all() {
+validate_build_options() {
+    [[ $# == 0 || ( $# == 1 && $1 == --os ) ]] || die 'expected no build options or --os'
+}
+
+require_os_assets() {
+    [[ ${1:-} != --os ]] || return 0
+    local name
+    for name in vmlinux debian13.ext4 debian13.ext4.initrd; do
+        [[ -f $build_dir/images/$name ]] || \
+            die "missing OS artifact $name; run ./vmm.sh build --os or add --os to this command"
+    done
+}
+
+build_preflight() {
     stage=preflight
     (( EUID != 0 )) || die 'run build/setup as your regular user; sudo is used for privileged steps'
     export PATH="$HOME/.cargo/bin:$PATH"
     local tool
-    for tool in cargo rustup curl git make musl-gcc python3 zstd; do need "$tool"; done
+    for tool in cargo rustup git musl-gcc python3; do need "$tool"; done
+    if [[ ${1:-} == --os ]]; then
+        for tool in curl make zstd; do need "$tool"; done
+    fi
     python3 -c 'import tomllib' || die 'Python 3.11+ is required'
+}
+
+compile_server() {
+    local output=${1:-$build_dir}
+    stage=server
+    (cd -- "$root"; CARGO_TARGET_DIR="$server_target" cargo build --locked --release --bin firecracker-server)
+    install -m 0755 "$server_target/release/firecracker-server" "$output/bin/firecracker-server"
+    compile_guest "$output"
+}
+
+compile_guest() {
+    stage=guest-agent
+    rustup target add x86_64-unknown-linux-musl
+    (cd -- "$root"; CARGO_TARGET_DIR="$server_target" cargo build --locked --release --target x86_64-unknown-linux-musl --bin firecracker-guest)
+    install -m 0755 "$server_target/x86_64-unknown-linux-musl/release/firecracker-guest" "$1/bin/firecracker-guest"
+}
+
+build_all() {
+    validate_build_options "$@"
+    build_preflight "$@"
     mkdir -p "$build_dir/bin" "$build_dir/images"
     # Serialize build and install so a deployment cannot read half-written artifacts.
     exec 9>"$build_dir/.lock"
     flock -n 9 || die 'another build/install is using BUILD_DIR'
     build_fork
     build_daemon
-    build_kernel
-    build_image
-    stage=server
-    (cd -- "$root"; CARGO_TARGET_DIR="$server_target" cargo build --locked --release --bin firecracker-server)
-    install -m 0755 "$server_target/release/firecracker-server" "$build_dir/bin/firecracker-server"
-    package_images
+    if [[ ${1:-} == --os ]]; then
+        build_kernel
+        build_image
+    else
+        stage=os
+        log 'result=skipped reason=--os-not-requested; existing kernel/rootfs left unchanged'
+    fi
+    compile_server
+    if [[ ${1:-} == --os ]]; then package_images; else write_manifest; fi
     log "result=success artifacts=$build_dir; deploy with ./vmm.sh install"
     exec 9>&-
 }
@@ -240,11 +287,18 @@ package_images() {
         zstd -t "$build_dir/images/$name.zst.part"
         mv -f -- "$build_dir/images/$name.zst.part" "$build_dir/images/$name.zst"
     done
+    write_manifest
+}
+
+write_manifest() {
     stage=manifest
     (
         cd -- "$build_dir"
         shopt -s nullglob
-        sha256sum bin/* images/vmlinux images/debian13.ext4 images/*.initrd images/*.zst images/*.json > SHA256SUMS.part
+        sha256sum bin/* > SHA256SUMS.part
+        for file in images/vmlinux images/debian13.ext4 images/*.initrd images/*.zst images/*.json; do
+            [[ ! -f $file ]] || sha256sum "$file" >> SHA256SUMS.part
+        done
         mv -f SHA256SUMS.part SHA256SUMS
     )
 }
@@ -259,6 +313,7 @@ package_only() {
 
 deploy() {
     stage=install
+    require_os_assets
     [[ -f $build_dir/SHA256SUMS ]] || die 'build artifacts first with ./vmm.sh build'
     exec 9>"$build_dir/.lock"
     flock -n 9 || die 'another build/install is using BUILD_DIR'
@@ -276,9 +331,8 @@ deploy_server() {
     mkdir -p "$server_build/bin"
     exec 9>"$build_dir/.lock"
     flock -n 9 || die 'another build/install is using BUILD_DIR'
-    (cd -- "$root"; CARGO_TARGET_DIR="$server_target" cargo build --locked --release --bin firecracker-server)
-    install -m 0755 "$server_target/release/firecracker-server" "$server_build/bin/firecracker-server"
-    (cd -- "$server_build"; sha256sum bin/firecracker-server > SHA256SUMS)
+    compile_server "$server_build"
+    (cd -- "$server_build"; sha256sum bin/* > SHA256SUMS)
     as_root python3 "$root/scripts/install-environment.py" "$server_build" "$root" --server-only
     exec 9>&-
     log 'result=success; images/config preserved; start firecracker-server explicitly'
@@ -291,7 +345,7 @@ check_host() {
 
 network_setup() {
     stage=network-preflight
-    as_root python3 "$root/scripts/network-environment.py" idle
+    host_cli network idle
     need ssh-keygen
     local identity=${SSH_IDENTITY:-$HOME/.ssh/mindos-firecracker}
     if [[ ! -f $identity ]]; then
@@ -299,24 +353,24 @@ network_setup() {
         ssh-keygen -q -t ed25519 -N '' -f "$identity"
     fi
     export SSH_PUBLIC_KEY=${SSH_PUBLIC_KEY:-$identity.pub}
-    build_all
+    build_all "$@"
     stage=network-install
     as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dnsmasq-base nftables iproute2 conntrack
-    as_root python3 "$root/scripts/network-environment.py" install
-    as_root systemctl enable --now mindos-firecracker-network.service
-    as_root systemctl restart mindos-firecracker-network.service
-    as_root python3 "$root/scripts/network-environment.py" idle
+    host_cli network idle
     as_root systemctl stop firecracker-server
     deploy
+    as_root python3 "$root/scripts/install-network.py" install
+    as_root systemctl enable --now mindos-firecracker-network.service
+    as_root systemctl restart mindos-firecracker-network.service
     as_root systemctl enable --now firecracker-server
     log 'result=success; create a VM, then ./vmm.sh ssh VM_ID'
 }
 
 shared_root_setup() {
     stage=shared-root-preflight
-    as_root python3 "$root/scripts/network-environment.py" idle
-    build_all
-    as_root python3 "$root/scripts/network-environment.py" idle
+    host_cli network idle
+    build_all "$@"
+    host_cli network idle
     stage=shared-root-install
     as_root systemctl stop firecracker-server
     if ! (deploy && as_root python3 "$root/scripts/shared-root-environment.py" debian13); then
@@ -331,7 +385,7 @@ ssh_vm() {
     local vm=${1:?usage: ./vmm.sh ssh VM_ID [COMMAND...]}
     shift
     local address alias
-    read -r address alias < <(as_root python3 "$root/scripts/network-environment.py" address "$vm")
+    read -r address alias < <(host_cli network address "$vm")
     ssh -F /dev/null -i "${SSH_IDENTITY:-$HOME/.ssh/mindos-firecracker}" \
         -o "UserKnownHostsFile=$HOME/.ssh/mindos-firecracker-known-hosts" \
         -o "HostKeyAlias=$alias" -o StrictHostKeyChecking=accept-new \
@@ -343,6 +397,7 @@ smoke() {
     stage=smoke
     need python3
     need sudo
+    require_os_assets
     sudo -n true || die 'smoke tests need noninteractive sudo (run sudo -v first)'
     if systemctl is-active --quiet firecracker-server 2>/dev/null; then
         die 'isolated smoke needs the deployed server stopped; use scripts/smoke-network.py for online network checks'
@@ -361,23 +416,26 @@ smoke() {
     exec 9>&-
 }
 
+main() {
 case ${1:-help} in
     help|-h|--help) usage ;;
-    build) init; build_all ;;
+    build) validate_build_options "${@:2}"; init; build_all "${@:2}" ;;
     deps) init; dependencies ;;
     install) init; deploy ;;
     install-server) init; deploy_server ;;
-    setup) init; dependencies; build_all; deploy; check_host ;;
-    network) init; network_setup ;;
-    shared-root) init; shared_root_setup ;;
+    setup) validate_build_options "${@:2}"; init; require_os_assets "${@:2}"; dependencies; build_all "${@:2}"; deploy; check_host ;;
+    network) validate_build_options "${@:2}"; init; require_os_assets "${@:2}"; network_setup "${@:2}" ;;
+    shared-root) validate_build_options "${@:2}"; init; require_os_assets "${@:2}"; shared_root_setup "${@:2}" ;;
     ssh) init; ssh_vm "${@:2}" ;;
-    service) init; as_root python3 "$root/scripts/service-environment.py" "${@:2}" ;;
-    list) init; as_root python3 "$root/scripts/service-list.py" "${@:2}" ;;
-    ip) init; as_root python3 "$root/scripts/network-environment.py" address "${2:?VM_ID required}" | cut -d ' ' -f 1 ;;
-    start|stop) init; as_root python3 "$root/scripts/network-environment.py" "$1" "${2:?VM_ID required}" "${@:3}" ;;
-    publish|unpublish|ports) init; as_root python3 "$root/scripts/network-environment.py" "$1" "${@:2}" ;;
+    service|list) init; host_cli "$1" "${@:2}" ;;
+    ip) init; host_cli network address "${2:?VM_ID required}" | cut -d ' ' -f 1 ;;
+    start|stop|reboot) init; host_cli "$1" "${2:?VM_ID required}" "${@:3}" ;;
+    publish|unpublish|ports) init; host_cli "$1" "${@:2}" ;;
     check) init; check_host ;;
     smoke) init; smoke ;;
     package) init; package_only ;;
     *) usage >&2; exit 2 ;;
 esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi

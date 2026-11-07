@@ -2,6 +2,8 @@
 
 统一管理入口为 `vmm.sh`，无参数显示帮助，显式 `build` 使用 release 构建。兼容脚本已删除，下文命令统一使用当前入口名称。
 
+OS 构建现需显式 `--os`：默认 `build` 只构建 release 程序制品并刷新校验清单，不构建或压缩 kernel/image。`setup`、`network`、`shared-root` 默认复用已有 OS 文件，缺失时在执行初始化副作用前提示传入 `--os`。新增 6 项构建选择回归，部署/构建测试共 24 项通过，验证默认构建保持已有 OS 文件内容和修改时间、无 OS 制品时可构建程序、显式 OS 构建阶段选择、初始化参数传递及未知参数拒绝。
+
 ## 2026-11-07：通用服务托管、持久根盘与 cell-x1
 
 后续补充顶层 `firecracker-server list [--all] [--json]` 和 `vmm.sh list`。已更新 release 二进制及已安装辅助脚本，在普通用户下直接执行成功，显示 `cell-x1` 为 `vmm-running / ready`、IP `10.203.0.2`、持久根盘及 `127.0.0.1:18787->8787/tcp`。列表只调用一次管理 API；本机单次快照耗时为 17–21 ms，不是前端页面性能验收。Python 服务回归现为 23 项，新增默认/全部列表、128 VM 单次 API、实例身份校验、无敏感信息输出和查询失败不得当作空列表的覆盖。Rust 26 项、部署 18 项、clippy/fmt 与语法检查通过；SSH 连接同时复测通过。
@@ -179,3 +181,37 @@ Debian 制品位于 `/var/tmp/mindos-firecracker-debian13-clean.ext4`。基础�
 当前映射配置只对运行中的 VM 实例生效；服务/VM 重建后不自动恢复。IPv6 和端口范围未实现。为适配 netns 的输入白名单，guest 看到 SNAT 后的槽位宿主地址 `10.204.N.1`，不保留客户端原始 IP。第三方纯 DNAT 规则没有监听 socket 时，需要管理员协调端口分配。
 
 服务保持 active/enabled，测试 VM、模拟外部客户端 namespace 和端口映射已清理。日志：`/var/tmp/fc-publish-final-build.log`、`/var/tmp/fc-publish-final-install.log`、`/var/tmp/fc-publish-rust.log`、`/var/tmp/fc-publish-python.log`、`/var/tmp/fc-publish-final-smoke.log`、`/var/tmp/fc-publish-network-regression.log`、`/var/tmp/fc-publish-check.log`。
+
+## 2026-11-07：Rust 运行期迁移与按 VM 代理
+
+宿主网络、端口发布、服务包安装/监督、列表和代理规则迁至 Rust；guest 使用静态链接的 `firecracker-guest`，通过 SSH 投递，不改基础镜像。删除旧运行期 Python 实现，构建/离线安装/诊断脚本保留 Python。升级备份位于 `/var/backups/mindos-firecracker/before-native-runtime/`，仅 root 可读。
+
+- Rust 47 项测试通过；覆盖包快照、路径/凭据日志约束、代理授权和槽位规则、端口冲突、guest 进程组回收、控制 EOF、就绪超时及持久根盘。构建/安装回归 26 项通过，包含旧 helper 迁移幂等、配置备份、已知 pyc 清理和缺少静态 guest 制品时在修改系统前失败。`cargo clippy --all-targets -- -D warnings` 通过。
+- 实际安装后的辅助程序为 ELF，网络和工作负载 systemd unit 使用 Rust CLI，guest 监督进程为静态 ELF；已安装 helper 目录没有 Python 源文件或字节码。没有卸载 Python：业务服务和离线构建仍可自行使用它。
+- `cell-x1` 使用 `services` profile、`cells-x1` 私有服务包、`clash` 代理。大小写两套代理环境传给服务和新登录 shell；guest 经 `http://10.204.0.1:7890` CONNECT/TLS 访问 `https://example.com` 返回 200。宿主 TCP 22、私网和其他 VM 地址仍被阻断，未授权 profile 请求代理返回 403。
+- cells 认证 capabilities/exports API、bubblewrap 子进程执行、直通目录写入通过。cells 普通 process API 的环境遵循业务工具自身策略；不把它视为任意宿主环境的自动继承。
+- 独立临时 VM 没有选择代理，验证不能访问其槽位的 `10.204.1.1:7890`。该 VM 的 Rust TCP/UDP loopback 发布均到达 guest，撤销后 API 显示为空且 TCP 不再可达；最后正常 `guest-shutdown` 并删除实例。
+- 管理服务停止后，代理和发布 mark 集合清空；更新管理程序并再次启动时，`cell-x1` 自动恢复 `ready`、代理和 `127.0.0.1:18787 -> 8787/tcp`。用户目录标记和 `/etc/ssh` 主机身份保持一致，代理 HTTPS 与 cells 功能复测通过。修复了工作负载先于管理 API 监听时立即失败的启动时序。
+- `vmlinux`、`debian13.ext4`、initrd 的 inode 和 SHA-256 与升级前完全一致。仅保留正式的 `cell-x1` VM，临时测试均取得 temporary-process 完成与清理回执，临时密钥副本及验收凭据已删除。
+
+旧 `smoke-network.py` 在 temporary-process 的用户命名空间内无法读取 VM 专用 UID 拥有的 jail 元数据，未宣称该完整脚本通过。本次实际网络/服务/端口检查改由有界作用域中的 API/SSH 驱动完成，不依赖该权限。外部入口 wildcard/netns 和管理服务 SIGKILL 的完整旧矩阵本次未重跑，历史结果见上节。
+
+## 2026-11-07：管理 API 启动就绪与新镜像恢复
+
+修复 `systemctl start firecracker-server` 返回后立即执行 `service up`/`list` 可能收到连接拒绝的问题：管理 unit 改为 `Type=notify`，初始化及 TCP bind 成功后由主进程发送 `READY=1`。工作负载复用同一通知实现。未运行 VM 的 SSH 地址查询补充 `VM_NOT_RUNNING` 上下文，CLI 日志阶段标识实际 runtime 子命令。
+
+- Rust 49 项回归、Clippy、26 项构建安装回归、ShellCheck 和 Bash 语法通过；通知测试覆盖送达和失效 socket。
+- 复现环境中，旧 cell-x1 已被用户销毁，管理服务已启动但 workload 绑定不存在。部署修复后连续执行管理服务启动、`service up cell-x1 cells-x1 --enable`、`list` 全部成功，没有插入 sleep；列表显示 `ready`、`clash`、`10.203.0.2` 和 `127.0.0.1:18787 -> 8787/tcp`。
+- 新 cell-x1 使用新 Debian 基础镜像（202 个包），通过 SSH 实际检查 less/vim/fd/rg/top/ps/free/ss/ip/curl/jq/file/tree/lsof/ping/dig/unzip/rsync/pstree 全部可用。agent 用户执行 image-check 通过，Node/Codex/Claude/DSH 版本探测通过，cells 认证 capabilities 返回 serverId=cell-x1。
+- SSH 验收驱动在 temporary-process 有界作用域内完成并取得成功清理回执；正式 cell-x1 保持 active/enabled。
+
+## 2026-11-07：reboot 命令与 guest 服务文件保留
+
+新增 `./vmm.sh reboot VM_ID` 和原生 `firecracker-server reboot VM_ID`。受管 VM 由 systemd restart 完整重启，保留开机启用状态；普通 VM 从 API 快照恢复 profile、目录、卷、代理及端口映射，持久根盘按已有策略复用。
+
+服务文件默认只在缺失时写入，兼容没有投递记录的旧 VM，保留 guest 编辑的内容与权限。服务包 `[[files]]` 可显式设置 `overwrite = true`，表示每次启动由宿主覆盖；默认 false。缺失文件使用同目录临时文件和 hard link 原子提交，避免并发创建时覆盖用户文件；拒绝已有符号链接和非当前用户的目标。guest 准备事件及宿主日志记录写入/保留数量，不记录文件内容。
+
+- Rust 57 项测试通过，包含普通 VM 重启策略/端口恢复、停止未确认/创建失败/无效快照、guest 编辑和包更新后保留、显式覆盖、旧 VM 迁移及符号链接拒绝；Clippy、26 项构建安装回归、ShellCheck、fmt、Bash 语法、diff 检查通过。
+- 升级前确认 cell-x1 guest 配置已与宿主快照不同。新监督进程启动日志记录 `preserved=2, written=0`，没有回写旧快照。应用因用户新增的 prj 根导出与旧验证项 vm-write 子目录重叠而退出；保留用户的 prj/rw 及其 owner 授权，仅移除旧验证项的导出配置，未删除目录文件。
+- 实际执行 `./vmm.sh reboot cell-x1` 成功，约 4122ms 后 ready；VM 实例标识改变，持久根盘 inode 相同，修正重叠项后的配置 SHA-256 在重启前后完全一致。cells 认证 capabilities/exports 验证通过，serverId=cell-x1，唯一导出为 prj/rw，代理和端口映射恢复，unit 保持 enabled。
+- 普通 VM 的 API/SSH 验收驱动在 temporary-process 内未能调用控制程序，因为其用户命名空间无法验证宿主私有目录绑定；没有宣称该真实分支通过。所属临时 VM、持久根盘及密钥副本均已清理，驱动取得结束回执；普通 VM 分支本次由 Rust 顺序/失败测试覆盖。正式受管 cell-x1 的重启是实际运行结果。

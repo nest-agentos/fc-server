@@ -4,17 +4,23 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 description = "Profile-controlled Firecracker isolation service for native harnesses"
+default-run = "firecracker-server"
+
+[[bin]]
+name = "firecracker-guest"
+path = "src/bin/guest.rs"
 
 [workspace]
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 axum = "0.7"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 futures-util = "0.3"
 libc = "0.2"
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking"] }
 rustix = { version = "1", features = ["fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

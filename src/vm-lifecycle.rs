@@ -22,8 +22,18 @@ impl VmLauncher {
         let root =
             launcher::prepare(&self.0, spec, profile, volumes, &spec.directories, uid, deadline)
                 .await?;
-        let (child, backend) = self.launch_processes(spec, profile, &root, uid, deadline).await?;
-        let vm = Vm::new(spec.clone(), uid, child, backend, profile.max_connections);
+        let instance = uuid::Uuid::new_v4().to_string();
+        crate::proxy::prepare(&self.0, spec, uid, &instance).await?;
+        let (child, backend) =
+            match self.launch_processes(spec, profile, &root, uid, deadline).await {
+                Ok(processes) => processes,
+                Err(error) => {
+                    crate::proxy::release(&self.0, spec, uid, &instance).await?;
+                    return Err(error);
+                }
+            };
+        let mut vm = Vm::new(spec.clone(), uid, child, backend, profile.max_connections);
+        vm.instance = instance;
         Ok(vm)
     }
 
@@ -71,6 +81,7 @@ impl VmLauncher {
 }
 
 pub async fn stop(config: &Config, id: &str, vm: &mut Vm) -> Result<&'static str, Error> {
+    crate::proxy::clear(config, vm).await?;
     crate::publication::clear(config, vm).await?;
     vm.stop.cancel();
     let mode = stop_vm(config, id, vm).await?;

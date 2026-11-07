@@ -41,7 +41,13 @@ ports = [7000]
 }
 
 fn spec() -> CreateVm {
-    CreateVm { id: "retained".into(), profile: "test".into(), directories: vec![], volumes: vec![] }
+    CreateVm {
+        id: "retained".into(),
+        profile: "test".into(),
+        directories: vec![],
+        volumes: vec![],
+        proxy: None,
+    }
 }
 
 async fn prepare(config: &Config, target: &Path) -> Result<(), firecracker_server::error::Error> {

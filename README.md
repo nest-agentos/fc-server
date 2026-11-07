@@ -6,25 +6,28 @@
 
 ## 自动准备运行环境
 
-统一入口为 `./vmm.sh`；不带参数或使用 `help`/`--help` 时显示帮助。完整 release 构建需显式执行 `./vmm.sh build`。
+统一入口为 `./vmm.sh`；不带参数或使用 `help`/`--help` 时显示帮助。`./vmm.sh build` 默认只构建 release 管理程序、Firecracker/jailer 和 virtiofsd，不构建或重新压缩 kernel/image。显式使用 `./vmm.sh build --os` 才处理 OS 制品。
+
+`setup`、`network`、`shared-root` 同样接受 `--os`：默认复用 `BUILD_DIR/images` 中已有的 kernel、rootfs 和 initrd，缺少时提示显式构建。首次安装、新 SSH 公钥需要进入镜像或需要更新 guest 时使用 `--os`。默认 `build` 可以在没有 OS 文件时完成，生成程序制品和校验清单；之后完整安装前仍需准备 OS 文件。已有 OS 文件会纳入校验清单，但不会重新生成或压缩。
 
 Linux x86_64 的 Debian/Ubuntu 宿主（Python 3.11+），以普通用户运行，脚本只在安装依赖、导出文件系统和部署时调用 sudo。默认直接使用相邻的 `../fc-hp`，即当前的 `~/share/prj/x1/tools/fc-hp`，不会重新 clone 或应用补丁。
 
 ```bash
 cd ~/share/prj/x1/tools/fc-server
-./vmm.sh setup
-./vmm.sh network
+./vmm.sh setup --os
+./vmm.sh network --os
 ./vmm.sh start demo project
 ./vmm.sh ssh demo
 ```
 
-`setup` 依次安装宿主依赖、构建制品、安装到系统目录并检查运行条件；会启动构建所需的 Docker，但不会自动启动或重启 Firecracker 服务。`network` 在没有活动 VM 时准备独立网卡、DHCP/DNS、IPv4 NAT 和 SSH，并部署镜像、启用及重启管理服务；它拒绝中断已有 VM。宿主必须已提供 KVM、cgroup v2 和 mount/PID/network namespace 能力。首次构建会联网下载 Rust 依赖、内核源码和 Debian 容器，建议预留约 20 GiB 空间，默认编译并行度为 8。需要无网 VM 时跳过 `network`，用 `sudo systemctl enable --now firecracker-server` 启动管理服务。
+`setup` 依次安装宿主依赖、构建制品、安装到系统目录并检查运行条件；会启动构建所需的 Docker，但不会自动启动或重启 Firecracker 服务。`network` 在没有活动 VM 时准备独立网卡、DHCP/DNS、IPv4 NAT 和 SSH，并部署镜像、启用及重启管理服务；它拒绝中断已有 VM。宿主必须已提供 KVM、cgroup v2 和 mount/PID/network namespace 能力。首次 OS 构建会联网下载 Rust 依赖、内核源码和 Debian 容器，建议预留约 20 GiB 空间，默认编译并行度为 8。需要无网 VM 时跳过 `network`，用 `sudo systemctl enable --now firecracker-server` 启动管理服务。
 
 也可分步执行：
 
 ```bash
 ./vmm.sh deps       # apt 依赖及缺失的 rustup
-./vmm.sh build      # release 构建全部制品，输出到 build/
+./vmm.sh build      # release 构建程序；kernel/image 保持不变
+./vmm.sh build --os # 同时构建 kernel/image 并生成 OS 压缩包
 ./vmm.sh package    # 重新生成 kernel/rootfs 的 zstd 发布包及校验文件
 ./vmm.sh smoke      # 临时 VM 真实 KVM 块卷 + virtio-fs 验收，需要免交互 sudo
 ./vmm.sh install    # 安装；运行中的服务须先显式停止
@@ -33,6 +36,7 @@ cd ~/share/prj/x1/tools/fc-server
 ./vmm.sh start demo project  # 新建 VM，直通已授权的 project
 ./vmm.sh list       # 列出当前 VM、服务状态、IP 与端口；可加 --all / --json
 ./vmm.sh ip demo    # 查询 guest 私有 IPv4 地址
+./vmm.sh reboot demo # 重启指定 VM；持久根盘保留，临时根盘重新创建
 ./vmm.sh publish demo 18080:8080/tcp --listen 0.0.0.0  # 发布到宿主所有 IPv4 地址
 ./vmm.sh ports demo # 查询当前 VM 的 TCP/UDP 映射
 ./vmm.sh unpublish demo 18080/tcp # 删除一条映射
@@ -40,26 +44,28 @@ cd ~/share/prj/x1/tools/fc-server
 ./vmm.sh stop demo  # 删除 VM；临时根盘修改随之丢弃
 ```
 
-构建包含服务 release、fork 指定 toolchain 的 musl Firecracker/jailer、Rust virtiofsd、内建 virtio-fs/vsock/ext4/i8042 的 Linux 6.18.54 内核，以及默认 **2048 MiB（2 GiB）** 的 Debian 13 根盘。默认 `GUEST_FLAVOR=harness` 预装 Codex、Claude Code、DSH；`GUEST_FLAVOR=base` 只构建精简基础系统。内核源码由 kernel.org 下载，校验脚本固定的 SHA-256；制品哈希写入 `build/SHA256SUMS`。virtiofsd 优先采用支持 `--readonly` 的系统版本，否则通过 Cargo 安装固定 1.14.0。内核配置以 fork 自带的 6.18 microVM 配置为基础，显式启用直通与正常关闭所需选项，并关闭 `CONFIG_FUSE_DAX`：该分支没有 DAX shared-memory region，开启时 guest virtio-fs 探测会失败。
+`build --os` 的完整构建包含服务 release、fork 指定 toolchain 的 musl Firecracker/jailer、Rust virtiofsd、内建 virtio-fs/vsock/ext4/i8042 的 Linux 6.18.54 内核，以及默认 **2048 MiB（2 GiB）** 的 Debian 13 根盘。默认 `GUEST_FLAVOR=harness` 预装 Codex、Claude Code、DSH；`GUEST_FLAVOR=base` 只构建精简基础系统。内核源码由 kernel.org 下载，校验脚本固定的 SHA-256；制品哈希写入 `build/SHA256SUMS`。virtiofsd 优先采用支持 `--readonly` 的系统版本，否则通过 Cargo 安装固定 1.14.0。内核配置以 fork 自带的 6.18 microVM 配置为基础，显式启用直通与正常关闭所需选项，并关闭 `CONFIG_FUSE_DAX`：该分支没有 DAX shared-memory region，开启时 guest virtio-fs 探测会失败。
 
-运行镜像保留 Bash、Git、Python、bubblewrap、systemd、udev、网络基础组件及非 root vsock 服务。man/info、语言翻译和普通文档在构建时裁剪，保留版权文件与 C.UTF-8；禁用 APT 更新、备份、fstrim 等定时任务、getty 及等待联网服务，journald 使用有界内存日志。systemd 继续负责服务隔离、挂载和正常关机。
+运行镜像保留 Bash、Git、Python、bubblewrap、systemd、udev、网络基础组件及非 root vsock 服务。默认还安装 less、Vim、fd（Debian 的 fd-find，提供 fd 命令）、ripgrep、procps（top/ps/free）、iproute2（ip/ss）、curl、jq、file、tree、lsof、ping、dig、unzip、rsync、psmisc（pstree/killall）。基础版和 harness 版都包含这些工具，导出镜像前以 agent 用户检查命令是否存在。man/info、语言翻译和普通文档在构建时裁剪，保留版权文件与 C.UTF-8；禁用 APT 更新、备份、fstrim 等定时任务、getty 及等待联网服务，journald 使用有界内存日志。systemd 继续负责服务隔离、挂载和正常关机。
+
+工具清单变更在下一次 `./vmm.sh build --os` 构建镜像时生效；普通 `build` 和 `install-server` 不更新 OS。已创建的持久根盘继续固定使用原基础镜像，不能通过替换全局 lower 给旧 upper 升级；应单独维护该 VM，或新建根盘后迁移数据。
 
 运行版通过 Docker BuildKit 多阶段构建使用 Node 24.22.1，最终只复制 Node 和生产依赖，不保留 npm、开发头文件或编译工具；npm 缓存保存在 BuildKit cache mount 中，不进入运行镜像。`guest/runtimes/package.json` 固定 Codex 0.164.0、Claude Code 2.1.209、DSH 0.2.0-rc.2，`package-lock.json` 锁定依赖树。DSH 需要新版 Node，不能直接使用 Debian 13 的 Node 20。升级工具时修改这两个文件并重新构建，禁止在每次启动时下载工具。
 
 ```bash
 # 可选：源码位置、已有内核/daemon、APT 镜像及并行度。
 FIRECRACKER_SOURCE=../fc-hp JOBS=4 ./vmm.sh build
-KERNEL_IMAGE=/absolute/path/vmlinux VIRTIOFSD=/absolute/path/virtiofsd ./vmm.sh build
-KERNEL_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/kernel/v6.x ./vmm.sh build
-GUEST_FLAVOR=base BUILD_DIR="$PWD/build/base" ./vmm.sh build
+KERNEL_IMAGE=/absolute/path/vmlinux VIRTIOFSD=/absolute/path/virtiofsd ./vmm.sh build --os
+KERNEL_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/kernel/v6.x ./vmm.sh build --os
+GUEST_FLAVOR=base BUILD_DIR="$PWD/build/base" ./vmm.sh build --os
 DEBIAN_MIRROR=http://mirrors.ustc.edu.cn/debian \
-DEBIAN_SECURITY_MIRROR=http://mirrors.ustc.edu.cn/debian-security ./vmm.sh build
-NPM_REGISTRY=https://registry.npmmirror.com ./vmm.sh build
+DEBIAN_SECURITY_MIRROR=http://mirrors.ustc.edu.cn/debian-security ./vmm.sh build --os
+NPM_REGISTRY=https://registry.npmmirror.com ./vmm.sh build --os
 # 显式更新根盘，成功后替换 build/images/debian13.ext4；再执行 install 部署。
-REBUILD_IMAGE=1 IMAGE_SIZE_MIB=8192 ./vmm.sh build
+REBUILD_IMAGE=1 IMAGE_SIZE_MIB=8192 ./vmm.sh build --os
 ```
 
-重复构建复用编译缓存；guest 配方、依赖锁、镜像类型、容量或构建参数变化时自动重建 ext4，旧版无输入记录的 4 GiB 镜像也会重建。输入相同则复用，可用 `REBUILD_IMAGE=1` 强制刷新基础镜像/系统包。`KERNEL_IMAGE` 由管理员保证兼容，真实启动可用 `smoke` 检验。构建和安装通过 `BUILD_DIR` 内的锁串行；自定义 `BUILD_DIR` 后，后续命令须沿用相同值。
+仅在显式指定 `--os` 时处理 OS 构建：重复构建复用编译缓存；guest 配方、依赖锁、镜像类型、容量或构建参数变化时自动重建 ext4，旧版无输入记录的 4 GiB 镜像也会重建。输入相同则复用，可用 `REBUILD_IMAGE=1` 强制刷新基础镜像/系统包。`KERNEL_IMAGE` 由管理员保证兼容，真实启动可用 `smoke` 检验。构建和安装通过 `BUILD_DIR` 内的锁串行；自定义 `BUILD_DIR` 后，后续命令须沿用相同值。
 
 产物包括 `build/images/vmlinux`、`debian13.ext4` 及各自的 `.zst` 压缩包。`debian13.ext4.json` 记录容量、文件系统已用空间、宿主实际占用、Docker 镜像 ID 和非 root 离线版本探测；`.inputs.json` 用于缓存判断。压缩包经解压校验并纳入 `SHA256SUMS`，适合后续通过 LFS 或其他制品服务分发；构建不会自动上传。解压根盘可使用 `zstd -d --sparse debian13.ext4.zst -o debian13.ext4`。部署和创建 VM 都优先尝试 reflink，并保留稀疏文件，避免把空闲块全部写入宿主磁盘。
 
@@ -121,13 +127,13 @@ COPY rootfs/ /
 保存需要持久化的数据，停止现有 VM，确认没有活动 VM 后执行：
 
 ```bash
-sudo python3 scripts/network-environment.py idle
-./vmm.sh shared-root
+sudo /usr/local/bin/firecracker-server network idle
+./vmm.sh shared-root --os
 ./vmm.sh start dev project
 ./vmm.sh ssh dev
 ```
 
-`shared-root` 会根据 guest 文件变化自动重建根盘，部署基础镜像和 initramfs，再启动管理服务；Firecracker 和内核复用已有编译缓存。自定义过 `BUILD_DIR`、`GUEST_FLAVOR`、镜像容量、APT/npm 镜像源或 SSH 公钥时，更新时应继续传入相应环境变量。只想刷新系统包而配方未变时，可用 `REBUILD_IMAGE=1 ./vmm.sh shared-root` 强制重建。
+`shared-root --os` 会根据 guest 文件变化自动重建根盘，部署基础镜像和 initramfs，再启动管理服务；Firecracker 和内核复用已有编译缓存。自定义过 `BUILD_DIR`、`GUEST_FLAVOR`、镜像容量、APT/npm 镜像源或 SSH 公钥时，更新时应继续传入相应环境变量。只想刷新系统包而配方未变时，可用 `REBUILD_IMAGE=1 ./vmm.sh shared-root --os` 强制重建。
 
 部署器通过替换文件发布新镜像，不会原地改写旧 inode。新建 VM 使用新版本；已经运行的 VM 不会因替换镜像路径而切换版本，且当前部署命令要求先停止所有 VM。停止会清理临时根盘 upper，持久卷和宿主直通目录按下文规则保留。基础镜像本身以 `0444` 发布，禁止在 VM 使用它期间，通过宿主挂载、debugfs 或直接写文件的方式修改这个 ext4，以免破坏 guest 文件系统和 OverlayFS 状态。
 
@@ -171,7 +177,7 @@ curl http://127.0.0.1:18080
 
 为适配现有 netns 隔离，映射流量会 SNAT 到该槽位的宿主 veth 地址 `10.204.N.1`，guest 应用看到的是这个地址，不保留原始客户端 IP。新映射会定向清理此前访问该宿主端口产生的连接跟踪，避免旧 UDP socket 绕过新 DNAT。仅修改本服务拥有的 nftables 表/链，不清空其他软件的防火墙表；用于发布流量的 conntrack mark 前缀 `0xfc000000/0xff000000` 由本服务保留。
 
-现有安装升级到这一版本时，先结束活动 VM，再运行 `./vmm.sh network`，以部署 helper、conntrack 依赖和新增的 nftables 链。该命令把 `port_publisher = "/usr/local/libexec/mindos-firecracker/publish-ports.py"` 写入部署配置；已有配置的备份为 `/etc/mindos-firecracker/config.before-publish.toml`。之后发布/撤销映射无需重启网络或 VM。
+现有安装升级到这一版本时，先结束活动 VM，再运行 `./vmm.sh network`，以部署 helper、conntrack 依赖和新增的 nftables 链。该命令把 `port_publisher = "/usr/local/libexec/mindos-firecracker/publish-ports"` 写入部署配置；已有配置的备份为 `/etc/mindos-firecracker/config.before-publish.toml`。之后发布/撤销映射无需重启网络或 VM。
 
 相关网络命令和配置的区别如下：
 
@@ -185,7 +191,7 @@ curl http://127.0.0.1:18080
 | `./vmm.sh ports VM_ID` | 查询当前 VM 的映射 |
 | profile 的 `ports = [7000]` | 授权 vsock 服务端口，不表示宿主 TCP/UDP 端口映射 |
 
-Firecracker 自身仍只提供 virtio-net/TAP，端口发布属于本服务的网络管理层。未发布的普通应用端口继续被 netns 防火墙阻断，宿主直连 SSH TCP 22 保持可用。真实端口验收可在有两个空闲槽位时运行 `sudo python3 scripts/smoke-publish-ports.py "$HOME/.ssh/mindos-firecracker"`，覆盖本机与模拟外部网段的 TCP/UDP、loopback 不对外暴露、端口冲突、撤销以及同 ID/IP 重建隔离。
+Firecracker 自身仍只提供 virtio-net/TAP，端口发布属于本服务的网络管理层。未发布的普通应用端口继续被 netns 防火墙阻断，宿主直连 SSH TCP 22 保持可用。真实端口验收可在有两个空闲槽位时运行 `sudo python3 scripts/smoke-publish-ports "$HOME/.ssh/mindos-firecracker"`，覆盖本机与模拟外部网段的 TCP/UDP、loopback 不对外暴露、端口冲突、撤销以及同 ID/IP 重建隔离。
 
 追加 `--crash` 可做管理服务 SIGKILL 故障注入；该模式要求没有业务 VM，会重启管理服务，仅清理本测试产生的遗留 jail/cgroup，并验证旧端口在重建后保持关闭、显式重新发布后才可访问。
 
@@ -225,7 +231,7 @@ exit
 
 普通 SSH 或 vsock 连接断开不会停止 VM；受管服务的 SSH 连接由监督层管理，连接中断会触发服务恢复。`./vmm.sh stop VM_ID`、管理服务正常停止/重启、VM 到达 profile 的非零 `max_lifetime_secs`，都会进入实例回收流程；持久根盘和卷保留。`max_lifetime_secs = 0` 表示管理员管理生命周期。guest 内执行 `reboot` 时，当前内核参数 `reboot=k` 会让 VMM 退出；持久根盘模式支持再次创建时复用磁盘，但不是内存状态恢复。
 
-修改管理配置并重启服务前，先用 `sudo python3 scripts/network-environment.py idle` 确认没有活动 VM；有活动 VM 时先安排停止，并把需要保留的数据放入直通目录或持久卷。
+修改管理配置并重启服务前，先用 `sudo /usr/local/bin/firecracker-server network idle` 确认没有活动 VM；有活动 VM 时先安排停止，并把需要保留的数据放入直通目录或持久卷。
 
 ## 边界与接口
 
@@ -378,7 +384,7 @@ curl -fsS -H "Authorization: Bearer $FIRECRACKER_API_KEY" \
 例如把宿主 `/home/li/share/prj` 映射为 guest 内的 `/home/li/share/prj`。先确认没有活动 VM，再编辑部署配置：
 
 ```bash
-sudo python3 scripts/network-environment.py idle
+sudo /usr/local/bin/firecracker-server network idle
 sudoedit /etc/mindos-firecracker/config.toml
 ```
 

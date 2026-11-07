@@ -34,6 +34,8 @@ def installed_config():
         paths.append(Path(data['port_publisher']))
         check(shutil.which('nft') is not None and shutil.which('conntrack') is not None,
               'nftables and conntrack for port publication')
+    if data.get('proxy_egress'):
+        paths.append(Path(data['proxy_egress']))
     for profile in data["profiles"].values():
         paths += [Path(profile[name]) for name in ("kernel", "rootfs")]
         if profile.get('initrd'):

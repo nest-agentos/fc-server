@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "egress_interface": "eth0",
+  "dns_servers": [
+    "1.1.1.1"
+  ],
+  "guest_network": "10.203.0.0/16",
+  "uplink_network": "10.204.0.0/16",
+  "slots": [
+    {
+      "index": 0,
+      "namespace": "mindos-fc-0",
+      "tap": "fc-tap",
+      "host_interface": "mfc-h0",
+      "peer_interface": "mfc-n0",
+      "guest_subnet": "10.203.0.0/30",
+      "uplink_subnet": "10.204.0.0/30",
+      "guest_ip": "10.203.0.2",
+      "gateway": "10.203.0.1",
+      "host_ip": "10.204.0.1",
+      "peer_ip": "10.204.0.2",
+      "guest_mac": "02:fc:00:00:00:01"
+    }
+  ]
+}

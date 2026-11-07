@@ -14,10 +14,12 @@ RUN sed -i "s|http://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g;
     && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     systemd systemd-sysv systemd-resolved dbus udev socat ca-certificates bash coreutils util-linux \
     git python3 bubblewrap openssh-server iproute2 libstdc++6 libatomic1 busybox-static \
+    less vim fd-find ripgrep procps curl jq file tree lsof iputils-ping dnsutils unzip rsync psmisc \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
     && useradd --create-home --uid 1000 --shell /bin/bash agent \
     && passwd -l root && passwd -l agent \
-    && mkdir -p /workspace /etc/systemd/network /usr/local/libexec /usr/share/mindos-image
+    && mkdir -p /workspace /etc/systemd/network /usr/local/libexec /usr/share/mindos-image \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd
 COPY ssh-authorized-keys /home/agent/.ssh/authorized_keys
 COPY mount-bindings harness-7000 configure-system image-check /usr/local/libexec/
 COPY mindos-bindings.service harness-vsock@.service mindos-ssh-hostkey.service /etc/systemd/system/

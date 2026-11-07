@@ -15,11 +15,14 @@ pub fn directory(config: &Config, id: &str) -> PathBuf {
 }
 
 fn manifest(config: &Config, spec: &CreateVm, profile: &Profile) -> Value {
+    // Network policy changes must not invalidate an existing writable root.
+    let mut storage_spec = spec.clone();
+    storage_spec.proxy = None;
     let bindings: Vec<_> = profile.bindings.iter().map(|name| {
         let b = &config.bindings[name];
         json!({"id":name,"source":b.source,"target":b.target,"readOnly":b.read_only,"backend":b.backend})
     }).collect();
-    json!({"version":1,"spec":spec,"bindings":bindings,"source":profile.rootfs,
+    json!({"version":1,"spec":storage_spec,"bindings":bindings,"source":profile.rootfs,
         "mode":if profile.rootfs_mode == RootfsMode::Shared {"shared"} else {"private"},
         "upperSizeMiB":profile.upper_size_mib})
 }

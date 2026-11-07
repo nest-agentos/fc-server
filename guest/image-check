@@ -17,7 +17,10 @@ def probe(program):
 
 def main():
     flavor = Path('/usr/share/mindos-image/flavor').read_text().strip()
-    for program in ('bash', 'git', 'python3', 'udevadm', 'socat', 'mount'):
+    for program in ('bash', 'git', 'python3', 'udevadm', 'socat', 'mount',
+                    'less', 'vim', 'fd', 'rg', 'top', 'ps', 'free', 'ss', 'ip',
+                    'curl', 'jq', 'file', 'tree', 'lsof', 'ping', 'dig', 'unzip',
+                    'rsync', 'pstree'):
         assert shutil.which(program), f'missing guest component: {program}'
     assert Path('/usr/lib/systemd/systemd').is_file(), 'missing systemd PID 1'
     assert not shutil.which('npm'), 'npm must stay in the build stage'

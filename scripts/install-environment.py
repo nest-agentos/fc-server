@@ -127,19 +127,51 @@ def install(build, repo):
 
 
 def install_server(build, repo):
+    for name in ("firecracker-server", "firecracker-guest"):
+        if not (build / "bin" / name).is_file():
+            raise RuntimeError(f"missing runtime artifact: {name}")
     helpers = Path('/usr/local/libexec/mindos-firecracker')
     directory(helpers)
-    for name in ('network-environment.py', 'install-environment.py', 'publish-ports.py',
-                 'service-environment.py', 'service-definition.py', 'service-guest.py', 'service-list.py'):
-        atomic_file(helpers / name, 0o755, source=repo / 'scripts' / name)
     atomic_file(Path('/usr/local/bin/firecracker-server'), 0o755,
                 source=build / 'bin/firecracker-server')
+    for name in ('publish-ports', 'proxy-egress'):
+        atomic_file(helpers / name, 0o755, source=build / 'bin/firecracker-server')
+    atomic_file(helpers / 'firecracker-guest', 0o755, source=build / 'bin/firecracker-guest')
     unit = Path("/etc/systemd/system/firecracker-server.service")
     trusted(unit.parent)
     atomic_file(unit, 0o644, source=repo / "firecracker-server.service")
     atomic_file(unit.with_name('firecracker-workload@.service'), 0o644,
                 source=repo / 'firecracker-workload@.service')
+    migrate_runtime_paths(helpers)
     subprocess.run(["systemctl", "daemon-reload"], check=True)
+
+
+def migrate_runtime_paths(helpers, config=Path('/etc/mindos-firecracker/config.toml'),
+                          unit=Path('/etc/systemd/system/mindos-firecracker-network.service')):
+    if config.exists():
+        text = config.read_text()
+        for name in ('publish-ports', 'proxy-egress'):
+            text = text.replace(str(helpers / (name + '.py')), str(helpers / name))
+        if text != config.read_text():
+            backup = config.with_name('config.before-rust-runtime.toml')
+            if not backup.exists():
+                atomic_file(backup, 0o600, source=config)
+            atomic_file(config, 0o600, data=text)
+    if unit.exists():
+        text = unit.read_text().replace(str(helpers / 'network-environment.py'),
+                                       '/usr/local/bin/firecracker-server network')
+        atomic_file(unit, 0o644, data=text)
+    for name in ('network-environment', 'install-environment', 'publish-ports', 'service-environment',
+                 'service-definition', 'service-guest', 'service-list', 'proxy-egress', 'proxy-policy'):
+        path = helpers / (name + '.py')
+        if path.exists():
+            trusted(path)
+            path.unlink()
+        cache = helpers / "__pycache__"
+        if cache.is_dir():
+            for bytecode in cache.glob(name + ".*.pyc"):
+                trusted(bytecode)
+                bytecode.unlink()
 
 
 def initial_config(config, repo, binaries):

@@ -11,7 +11,7 @@ import time
 import tomllib
 import urllib.request
 
-SPEC = spec_from_file_location('network_environment', Path(__file__).with_name('network-environment.py'))
+SPEC = spec_from_file_location('network_environment', Path(__file__).with_name('install-network.py'))
 network = module_from_spec(SPEC)
 SPEC.loader.exec_module(network)
 

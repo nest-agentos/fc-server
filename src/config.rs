@@ -15,12 +15,28 @@ pub struct Config {
     pub firecracker: PathBuf,
     pub virtiofsd: Option<PathBuf>,
     pub port_publisher: Option<PathBuf>,
+    pub proxy_egress: Option<PathBuf>,
     pub state_dir: PathBuf,
     pub uid_base: u32,
     pub max_vms: usize,
     pub profiles: BTreeMap<String, Profile>,
     #[serde(default)]
     pub bindings: BTreeMap<String, Binding>,
+    #[serde(default)]
+    pub proxies: BTreeMap<String, Proxy>,
+}
+
+#[derive(Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Proxy {
+    pub http: Option<String>,
+    pub socks: Option<String>,
+    #[serde(default = "default_no_proxy")]
+    pub no_proxy: Vec<String>,
+}
+
+fn default_no_proxy() -> Vec<String> {
+    ["localhost", "127.0.0.1", "::1"].map(String::from).to_vec()
 }
 
 #[derive(Clone, Deserialize)]
@@ -45,6 +61,8 @@ pub struct Profile {
     pub bindings: Vec<String>,
     #[serde(default)]
     pub network_slots: Vec<NetworkSlot>,
+    #[serde(default)]
+    pub allowed_proxies: Vec<String>,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -117,6 +135,14 @@ impl Config {
             "key environment and profiles required"
         );
         self.validate_profiles()?;
+        ensure!(
+            self.proxies.is_empty() || self.proxy_egress.is_some(),
+            "proxies require proxy_egress helper"
+        );
+        for (name, proxy) in &self.proxies {
+            ensure!(valid_id(name), "invalid proxy id");
+            crate::proxy::validate(proxy)?;
+        }
         for (name, binding) in &self.bindings {
             binding.validate(name)?;
             ensure!(
@@ -130,6 +156,14 @@ impl Config {
         for (name, profile) in &self.profiles {
             ensure!(valid_id(name), "invalid profile id");
             profile.validate()?;
+            ensure!(
+                profile.allowed_proxies.iter().all(|id| self.proxies.contains_key(id)),
+                "unknown allowed proxy"
+            );
+            ensure!(
+                profile.allowed_proxies.is_empty() || !profile.network_slots.is_empty(),
+                "proxy requires network slots"
+            );
             ensure!(
                 profile.network_slots.is_empty() || profile.network_slots.len() == self.max_vms,
                 "network_slots must cover every global VM slot"
@@ -164,6 +198,9 @@ impl Config {
             trusted(daemon)?;
         }
         if let Some(helper) = &self.port_publisher {
+            trusted(helper)?;
+        }
+        if let Some(helper) = &self.proxy_egress {
             trusted(helper)?;
         }
         for profile in self.profiles.values() {

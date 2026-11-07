@@ -3,7 +3,8 @@ api_key_env = "FIRECRACKER_API_KEY"
 jailer = "/usr/local/bin/jailer"
 firecracker = "/usr/local/bin/firecracker"
 state_dir = "/var/lib/mindos-firecracker"
-port_publisher = "/usr/local/libexec/mindos-firecracker/publish-ports.py"
+port_publisher = "/usr/local/libexec/mindos-firecracker/publish-ports"
+proxy_egress = "/usr/local/libexec/mindos-firecracker/proxy-egress"
 uid_base = 200000
 max_vms = 4
 

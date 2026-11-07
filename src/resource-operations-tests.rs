@@ -63,6 +63,7 @@ async fn root_deletion_requires_detached_vm_and_valid_id() {
         profile: "test".into(),
         volumes: vec![],
         directories: vec![],
+        proxy: None,
     };
     let child = tokio::process::Command::new("/bin/true").spawn().unwrap();
     shared.lock().await.vms.insert("retained".into(), Vm::new(spec, 200000, child, None, 1));
@@ -91,6 +92,7 @@ async fn unlimited_lifetime_still_reaps_exited_vms() {
         profile: "test".into(),
         volumes: vec![],
         directories: vec![],
+        proxy: None,
     };
     let mut vm = Vm::new(spec, 200000, child, None, 1);
     vm.born = std::time::Instant::now() - Duration::from_secs(120);
@@ -117,6 +119,7 @@ async fn slow_import_does_not_block_queries_or_another_vm_stop() {
         profile: "test".into(),
         volumes: vec![],
         directories: vec![],
+        proxy: None,
     };
     shared.lock().await.vms.insert(spec.id.clone(), Vm::new(spec, 200000, child, None, 1));
     let (entered, started) = oneshot::channel();
@@ -197,6 +200,7 @@ async fn launch_reservations_keep_uids_and_volumes_exclusive() {
         profile: "test".into(),
         volumes: vec!["disk".into()],
         directories: vec![],
+        proxy: None,
     };
     let (_, _, first_uid) = manager.reserve_vm(&spec).unwrap();
     let mut second = spec.clone();

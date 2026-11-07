@@ -100,8 +100,23 @@ async fn source_aliases_cannot_be_exported_to_concurrent_vms() {
         profile: "test".into(),
         volumes: vec![],
         directories: vec!["alias".into()],
+        proxy: None,
     };
     assert_eq!(manager.reserve_vm(&spec).err().unwrap().code, "DIRECTORY_ATTACHED");
+}
+
+#[tokio::test]
+async fn proxy_selection_requires_profile_authorization() {
+    let dir = tempfile::tempdir().unwrap();
+    let shared = tunnel_manager(config(dir.path()));
+    let spec = firecracker_server::manager::CreateVm {
+        id: "new-vm".into(),
+        profile: "test".into(),
+        volumes: vec![],
+        directories: vec![],
+        proxy: Some("not-authorized".into()),
+    };
+    assert_eq!(shared.lock().await.reserve_vm(&spec).err().unwrap().code, "PROXY_NOT_AUTHORIZED");
 }
 
 #[test]
@@ -178,6 +193,7 @@ fn tunnel_manager(config: Config) -> firecracker_server::manager::Shared {
             profile: "test".into(),
             volumes: vec![],
             directories: vec![],
+            proxy: None,
         },
         uid: 200000,
         child,

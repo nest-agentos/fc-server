@@ -16,20 +16,20 @@
 
 `list` 默认显示当前 VMM 实例（包括启动/停止中的实例），列出 VM ID、profile、服务、VM/服务状态、guest IP、根盘是否持久及端口映射；普通 VM 也会显示。`--all` 额外包含已停止的服务绑定和保留的根盘；不包含未完成的初始化目录。`--json` 输出 `{"vms":[...]}`，诊断日志写入 stderr。列表使用一次管理 API 快照，端口随 VM 信息返回，不逐台请求。
 
-管理配置和 API key 是 root 私有文件，普通用户运行二进制的 `list` 命令时会通过 sudo 调用已安装的可信列表脚本；不需要手工读取或导出密钥。查询失败会明确报错，不会冒充空列表。服务 `ready` 还需核对当前监督状态及 VM 实例身份，`vmm-running` 本身不代表应用就绪。
+管理配置和 API key 是 root 私有文件，普通用户运行二进制的 `list` 命令时会通过 sudo 调用已安装的可信 Rust 管理程序；不需要手工读取或导出密钥。查询失败会明确报错，不会冒充空列表。服务 `ready` 还需核对当前监督状态及 VM 实例身份，`vmm-running` 本身不代表应用就绪。
 
 ## 更新管理程序，保留已有镜像
 
 确认没有活动 VM，再更新宿主程序：
 
 ```bash
-sudo python3 scripts/network-environment.py idle
+sudo /usr/local/bin/firecracker-server network idle
 sudo systemctl stop firecracker-server
 ./vmm.sh install-server
 sudo systemctl start firecracker-server
 ```
 
-`install-server` 只构建/安装 Rust 管理程序、Python 宿主辅助脚本及 systemd unit，不构建或替换内核、Debian 镜像、Firecracker、virtiofsd、管理配置或 API key。首次环境仍使用 `setup`、`network`。现有 guest 必须已有 Python 3、SSH、公钥和应用运行依赖。
+`install-server` 构建/安装 Rust 管理程序、静态链接的 Rust guest agent 及 systemd unit，不构建或替换内核、Debian 镜像、Firecracker、virtiofsd 或 API key。升级时自动迁移标准 helper 路径和网络 unit，原配置备份为 `config.before-rust-runtime.toml`，并删除旧运行期 Python helper。首次环境使用 `setup --os`、`network --os`。日常 `build` 默认也跳过 OS；仅 `build --os`（或初始化命令显式传入 `--os`）处理 kernel/image。宿主运行期及 guest 监督进程不依赖 Python；静态 guest agent 通过 SSH 自动上传至 agent 用户目录。现有 guest 只需 SSH、公钥和应用自身的运行依赖。构建、安装和验收脚本仍有 Python 3.11+ 依赖。旧版本已启用网络的安装，在停止管理服务后更新程序，再重启 `mindos-firecracker-network`，最后启动管理服务，以建立新增的代理规则集合。
 
 ## 配置持久运行环境
 
@@ -84,21 +84,47 @@ curl http://127.0.0.1:18080
 | --- | --- |
 | `id` / `profile` | 服务 ID 与已授权 VM profile |
 | `directories` / `volumes` | 授权直通绑定和已经创建的持久卷 ID，不自动导入卷 |
+| `proxy` | 可选，引用宿主管理配置中已授权的代理名称 |
 | `command` | guest argv 数组，不经过隐式 shell |
 | `working_directory` | guest 绝对工作目录 |
 | `environment` | guest 环境变量表，随私有服务包保存 |
-| `files` | 包内相对 source、guest 服务目录下相对 target，可选 executable |
+| `files` | 包内相对 source、guest 服务目录下相对 target；可选 executable、overwrite |
 | `ready_port` | guest loopback TCP 就绪端口；启动前拒绝已有监听者 |
 | `startup_timeout_secs` | SSH/应用就绪等待上限，1–300 秒，默认 60 |
 | `publish` | 通过现有 API 发布的 TCP/UDP 映射，只在服务就绪后发布 |
 
-`{service_dir}` 可用于命令参数与环境变量，展开为 `/home/agent/.local/share/firecracker-services/SERVICE_ID`。单个包最多 64 个文件、总计 32 MiB；更大的程序可通过授权直通目录读取。配置和小脚本每次启动重新投递；其他用户文件保留，不执行目录镜像删除。
+`{service_dir}` 可用于命令参数与环境变量，展开为 `/home/agent/.local/share/firecracker-services/SERVICE_ID`。单个包最多 64 个文件、总计 32 MiB；更大的程序可通过授权直通目录读取。文件默认仅在目标不存在时投递；guest 内已有文件（包括升级前已存在、没有部署记录的文件）原样保留，重启不会覆盖用户编辑。缺失文件会补回，不执行目录镜像删除。显式设置 `overwrite = true` 的文件在每次准备/启动时以宿主快照覆盖；默认是 `false`，适用于在 guest 内维护的配置。
 
-安装将文件与 SSH 私钥快照保存到宿主 `/var/lib/mindos-firecracker/services/packages/`，权限由私有根目录和 0600 文件约束；后续启动不依赖原始服务包或用户的 SSH 私钥路径。同 ID 同内容重复安装幂等；更新包要求所有绑定 VM 的监督服务均停止。profile、挂载等存储变更仍受持久根盘兼容检查限制。服务包和业务凭据不应提交到仓库。
+安装将文件与 SSH 私钥快照保存到宿主 `/var/lib/mindos-firecracker/services/packages/`，权限由私有根目录和 0600 文件约束；后续启动不依赖原始服务包或用户的 SSH 私钥路径。更新宿主服务包不会自动覆盖 guest 已有文件；需要宿主管理某个文件时，在它的 `[[files]]` 中显式声明 `overwrite = true` 后重新安装服务包。同 ID 同内容重复安装幂等；更新包要求所有绑定 VM 的监督服务均停止。profile、挂载等存储变更仍受持久根盘兼容检查限制。服务包和业务凭据不应提交到仓库。
 
 宿主的 `firecracker-workload@VM_ID.service` 监督 SSH，guest 辅助进程监督应用进程组。SSH 控制通道 EOF 会终止应用；失败会清理当前 VM 并由 systemd 重试。就绪事件通过 `sd_notify` 上报，端口全部发布成功后才算启动完成。服务退出、SSH 失败、就绪超时和端口冲突均记录分类日志，原始应用输出不写入管理日志。
 
+管理服务使用 systemd `Type=notify`，完成初始化并绑定 API 监听端口后才发送就绪通知；`systemctl start firecracker-server` 返回后可立即创建或查询 VM。
+
 管理服务正常重启会先停止关联监督 unit，再重建 VM、准备文件、启动服务并恢复端口。`--enable` 控制宿主开机恢复；不加时仍会在本次运行期间监督服务。服务清理按 VM 实例标识核对，拒绝删除同 ID 的替代实例。
+
+例如，保留 guest 自己编辑的配置：
+
+```toml
+[[files]]
+source = "config.toml"
+target = "config.toml"
+overwrite = false
+```
+
+以上是默认行为。`overwrite = true` 表示持续由宿主管理该文件，后续重启也会覆盖。guest 的 `~/.config/firecracker/proxy.env` 是平台代理配置，仍由所选代理定义更新，不受服务文件的保留策略影响。
+
+## 重启虚拟机
+
+```bash
+./vmm.sh reboot VM_ID
+# Equivalent native command:
+sudo /usr/local/bin/firecracker-server reboot VM_ID
+```
+
+受管服务通过 `systemctl restart firecracker-workload@VM_ID` 完整停止并启动，保留开机启用状态，等待服务 ready 后返回。普通 VM 保留原 profile、目录、卷和代理选择，停止后重新创建，并恢复原端口映射；此时仅确认 VMM 已启动，应用需要自己的开机启动机制。持久根盘和额外卷保留，临时根盘的修改会按 profile 策略丢弃。未运行的 VM、缺少参数或多余参数会明确报错。
+
+普通 VM 重启会分阶段记录 stop/create/restore_ports 的结果；端口恢复失败时保留已重建的 VM 并报告具体阶段。重启期间不应由其他管理客户端同时停止或替换同一 VM。
 
 ## 停止、销毁与日志
 
@@ -119,4 +145,26 @@ sudo /usr/local/bin/firecracker-server service destroy web-demo
 
 服务定义由宿主管理员安装，SSH 用户固定为基础镜像中的非 root `agent`。它是同一管理员信任域的部署机制，不提供服务包之间的租户隔离。就绪目前是 TCP 探测，完整业务功能仍需调用应用接口验收。
 
-回归：`python3 scripts/test-services.py`、`cargo test --locked`，其中涉及测试进程的检查应放在仓库 temporary-process 有界作用域内执行。
+回归：`cargo test --locked`、`cargo clippy --all-targets -- -D warnings`、`python3 scripts/test-build-environment.py`，其中涉及测试进程的检查应放在仓库 temporary-process 有界作用域内执行。
+
+
+## 按 VM 选择代理
+
+管理员在 `/etc/mindos-firecracker/config.toml` 顶层配置 helper 和代理定义：
+
+```toml
+proxy_egress = "/usr/local/libexec/mindos-firecracker/proxy-egress"
+
+[proxies.clash]
+http = "http://{host_ip}:7890"
+socks = "socks5h://{host_ip}:7890"
+no_proxy = ["localhost", "127.0.0.1", "127.0.0.0/8", "::1", "192.168.31.0/24"]
+```
+
+在已有 `[profiles.services]` 表内加入 `allowed_proxies = ["clash"]`；服务包根表加入 `proxy = "clash"`，停止该服务、重新 `service install` 后再启动。也可通过创建 VM 的 API 提供 `"proxy":"clash"`，但应用环境和 shell 配置由服务管理层投递。
+
+`{host_ip}` 按 VM 槽位替换：第一台通常为 `10.204.0.1`，后续为 `10.204.1.1` 等。Clash 必须监听该地址或 `0.0.0.0:7890`。也支持明确的外部 IPv4 代理地址；当前不接受域名和 URL 凭据。
+
+服务进程和新登录 shell 会获得大小写两套 `http_proxy`、`https_proxy`、`all_proxy`、`no_proxy`。shell 文件位于 `~/.config/firecracker/proxy.env`，`.profile`/`.bashrc` 追加一次引用，已有内容保留。选择代理时禁止在服务 `environment` 中重复声明这些键；取消引用后会清理托管的 shell 配置。
+
+网络层只为选择了该代理的 VM 放行指定地址的 TCP 端口，停止时撤销并清除相关 conntrack。`no_proxy` 仅控制应用绕过代理，不额外放行私网；默认隔离仍生效。这是应用代理环境配置，不是所有协议的透明代理，不读取代理环境的应用需自行配置。

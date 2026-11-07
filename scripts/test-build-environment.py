@@ -6,6 +6,7 @@ from collections import namedtuple
 import ipaddress
 import os
 import stat
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -19,7 +20,7 @@ REPO = Path(__file__).resolve().parents[1]
 INFO_SPEC = spec_from_file_location('image_info', REPO / 'scripts/image-info.py')
 image_info = module_from_spec(INFO_SPEC)
 INFO_SPEC.loader.exec_module(image_info)
-NET_SPEC = spec_from_file_location('network_info', REPO / 'scripts/network-environment.py')
+NET_SPEC = spec_from_file_location('network_info', REPO / 'scripts/install-network.py')
 network_info = module_from_spec(NET_SPEC)
 NET_SPEC.loader.exec_module(network_info)
 SHARED_SPEC = spec_from_file_location('shared_root', REPO / 'scripts/shared-root-environment.py')
@@ -46,15 +47,48 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(environment.read_bytes(), original_key)
             self.assertEqual(stat.S_IMODE(environment.stat().st_mode), 0o600)
 
-    def test_server_only_install_never_writes_images_or_config(self):
+    def test_server_only_install_never_deploys_images(self):
+        (self.directory / 'bin').mkdir()
+        for name in ('firecracker-server', 'firecracker-guest'):
+            (self.directory / 'bin' / name).write_bytes(b'fixture')
         with patch.object(installer, 'directory'), patch.object(installer, 'trusted'), \
-                patch.object(installer, 'atomic_file') as write, patch.object(installer.subprocess, 'run'):
+                patch.object(installer, 'atomic_file') as write, patch.object(installer, 'migrate_runtime_paths'), \
+                patch.object(installer.subprocess, 'run'):
             installer.install_server(self.directory, REPO)
         targets = [str(call.args[0]) for call in write.call_args_list]
         self.assertIn('/usr/local/bin/firecracker-server', targets)
         self.assertIn('/etc/systemd/system/firecracker-workload@.service', targets)
         self.assertFalse(any(path.startswith(('/var/lib/mindos-images/', '/etc/mindos-firecracker/'))
                              for path in targets))
+
+    def test_runtime_migration_preserves_business_config_and_removes_known_python_helpers(self):
+        helpers = self.directory / 'helpers'
+        helpers.mkdir()
+        (helpers / '__pycache__').mkdir()
+        (helpers / 'service-guest.py').write_text('legacy')
+        (helpers / '__pycache__/service-guest.cpython-314.pyc').write_bytes(b'cache')
+        (helpers / 'custom.py').write_text('administrator tool')
+        config = self.directory / 'config.toml'
+        original = f'port_publisher = "{helpers}/publish-ports.py"\n[profiles.custom]\nvalue="private-fixture"\n'
+        config.write_text(original)
+        unit = self.directory / 'network.service'
+        unit.write_text(f'ExecStart={helpers}/network-environment.py up\n')
+        with patch.object(installer, 'trusted'):
+            installer.migrate_runtime_paths(helpers, config, unit)
+            installer.migrate_runtime_paths(helpers, config, unit)
+        self.assertEqual(config.with_name('config.before-rust-runtime.toml').read_text(), original)
+        self.assertIn('value="private-fixture"', config.read_text())
+        self.assertNotIn('publish-ports.py', config.read_text())
+        self.assertIn('/usr/local/bin/firecracker-server network up', unit.read_text())
+        self.assertFalse((helpers / 'service-guest.py').exists())
+        self.assertEqual(list((helpers / '__pycache__').iterdir()), [])
+        self.assertTrue((helpers / 'custom.py').exists())
+
+    def test_missing_guest_artifact_fails_before_any_system_mutation(self):
+        with patch.object(installer, 'atomic_file') as write:
+            with self.assertRaisesRegex(RuntimeError, 'missing runtime artifact'):
+                installer.install_server(self.directory, REPO)
+            write.assert_not_called()
 
     def test_failed_copy_preserves_existing_artifact(self):
         target = self.directory / "rootfs.ext4"
@@ -110,6 +144,106 @@ class DeploymentTests(unittest.TestCase):
                 patch.object(installer.grp, "getgrall", return_value=[]), \
                 self.assertRaisesRegex(RuntimeError, "occupied"):
             installer.reserve_uids(300000, 4)
+
+
+class BuildSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        self.build = self.directory / 'artifacts'
+        self.trace = self.directory / 'trace'
+        commands = self.directory / 'commands'
+        commands.mkdir()
+        cargo = commands / 'cargo'
+        cargo.write_text('#!/bin/sh\nset -eu\nprintf "cargo:%s\\n" "$*" >> "$TRACE"\n'
+                         'mkdir -p "$CARGO_TARGET_DIR/release"\n'
+                         'printf server > "$CARGO_TARGET_DIR/release/firecracker-server"\n')
+        cargo.chmod(0o755)
+        self.environment = {**os.environ, 'PATH': str(commands) + ':' + os.environ['PATH'],
+                            'BUILD_DIR': str(self.build), 'CARGO_TARGET_DIR': str(self.directory / 'target'),
+                            'TRACE': str(self.trace), 'SSH_IDENTITY': str(self.directory / 'identity')}
+        (self.directory / 'identity').write_text('fixture')
+
+    def images(self):
+        directory = self.build / 'images'
+        directory.mkdir(parents=True, exist_ok=True)
+        for name in ('vmlinux', 'debian13.ext4', 'debian13.ext4.initrd', 'debian13.ext4.zst'):
+            (directory / name).write_bytes(b'existing OS fixture')
+        return {path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in directory.iterdir()}
+
+    def run_build(self, *arguments):
+        program = r'''
+source "$1"
+shift
+record() { printf '%s\n' "$*" >> "$TRACE"; }
+build_preflight() { record "preflight:$*"; }
+build_fork() { record fork; printf fork > "$build_dir/bin/firecracker"; }
+build_daemon() { record daemon; printf daemon > "$build_dir/bin/virtiofsd"; }
+compile_guest() { record guest-agent; printf guest > "$1/bin/firecracker-guest"; }
+build_kernel() { record kernel; printf kernel > "$build_dir/images/vmlinux"; }
+build_image() { record image; printf image > "$build_dir/images/debian13.ext4"; printf initrd > "$build_dir/images/debian13.ext4.initrd"; }
+package_images() { record package; write_manifest; }
+dependencies() { record deps; }
+as_root() { record "privileged:$*"; }
+host_cli() { record "native:$*"; }
+deploy() { record deploy; }
+check_host() { record check; }
+need() { :; }
+main "$@"
+'''
+        return subprocess.run(['bash', '-c', program, 'build-test', str(REPO / 'vmm.sh'), *arguments],
+                              env=self.environment, capture_output=True, text=True, timeout=10)
+
+    def steps(self):
+        return self.trace.read_text().splitlines() if self.trace.exists() else []
+
+    def test_default_build_preserves_existing_os_and_does_not_package(self):
+        before = self.images()
+        result = self.run_build('build')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = {path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+                 for path in (self.build / 'images').iterdir()}
+        self.assertEqual(before, after)
+        self.assertFalse({'kernel', 'image', 'package'} & set(self.steps()))
+        self.assertIn('cargo:build --locked --release --bin firecracker-server', self.steps())
+        subprocess.run(['sha256sum', '--check', 'SHA256SUMS'], cwd=self.build,
+                       check=True, capture_output=True)
+
+    def test_default_build_succeeds_without_os_artifacts(self):
+        result = self.run_build('build')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(list((self.build / 'images').iterdir()))
+        self.assertNotIn('images/', (self.build / 'SHA256SUMS').read_text())
+
+    def test_os_flag_runs_kernel_image_and_packaging(self):
+        result = self.run_build('build', '--os')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue({'kernel', 'image', 'package'} <= set(self.steps()))
+        self.assertIn('images/vmlinux', (self.build / 'SHA256SUMS').read_text())
+
+    def test_unknown_options_fail_before_build_or_directory_creation(self):
+        for command in ('build', 'setup', 'network', 'shared-root'):
+            result = self.run_build(command, '--unknown')
+            self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.build.exists())
+        self.assertEqual(self.steps(), [])
+
+    def test_initialization_requires_explicit_os_flag_when_assets_missing(self):
+        for command in ('setup', 'network', 'shared-root'):
+            result = self.run_build(command)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('add --os', result.stderr)
+        self.assertEqual(self.steps(), [])
+
+    def test_initialization_propagates_only_explicit_os_selection(self):
+        self.images()
+        for command in ('setup', 'network', 'shared-root'):
+            for options in ([], ['--os']):
+                self.trace.unlink(missing_ok=True)
+                result = self.run_build(command, *options)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual('kernel' in self.steps(), bool(options))
 
 
 class SharedRootTests(unittest.TestCase):
