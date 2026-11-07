@@ -54,18 +54,16 @@ fn mount_token(config: &Config, name: &str) -> String {
 
 pub async fn prepare(
     config: &Config,
-    id: &str,
+    spec: &crate::manager::CreateVm,
     profile: &Profile,
     volumes: &[Volume],
     directories: &[String],
     uid: u32,
     deadline: std::time::Instant,
 ) -> Result<PathBuf, Error> {
-    let root = jail(config, id).join("root");
+    let root = jail(config, &spec.id).join("root");
     tokio::fs::create_dir_all(&root).await.map_err(|e| Error::io("jail_create", e))?;
-    copy(&profile.kernel, &root.join("vmlinux"), deadline).await?;
-    readonly(&root.join("vmlinux"))?;
-    prepare_root(profile, &root, uid, deadline).await?;
+    crate::rootfs::prepare(config, spec, profile, &root, uid, deadline).await?;
     attach(config, &root, volumes, uid).await?;
     let mut machine = machine(config, profile, volumes, directories);
     if let Some(slot) = network(config, profile, uid)? {
@@ -79,7 +77,7 @@ pub async fn prepare(
     Ok(root)
 }
 
-async fn prepare_root(
+pub(crate) async fn prepare_root(
     profile: &Profile,
     root: &Path,
     uid: u32,
@@ -156,13 +154,17 @@ async fn attach(config: &Config, root: &Path, volumes: &[Volume], uid: u32) -> R
     Ok(())
 }
 
-fn readonly(path: &Path) -> Result<(), Error> {
+pub(crate) fn readonly(path: &Path) -> Result<(), Error> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o444))
         .map_err(|e| Error::io("asset_permissions", e))
 }
 
-async fn copy(source: &Path, target: &Path, deadline: std::time::Instant) -> Result<(), Error> {
+pub(crate) async fn copy(
+    source: &Path,
+    target: &Path,
+    deadline: std::time::Instant,
+) -> Result<(), Error> {
     let mut child = Command::new("/usr/bin/cp")
         .env_clear()
         .args(["--reflink=auto", "--sparse=always", "--"])
@@ -223,7 +225,7 @@ fn jailer_command(
         .arg(uid.to_string())
         .arg("--chroot-base-dir")
         .arg(&config.state_dir);
-    cgroup_limits(&mut command, profile);
+    cgroup_limits(&mut command, profile, &jail(config, id).join("root/base.ext4"));
     if let Some(slot) = network(config, profile, uid)? {
         command.arg("--netns").arg(&slot.netns);
     }
@@ -243,9 +245,9 @@ fn firecracker_arguments(command: &mut Command) {
     ]);
 }
 
-fn cgroup_limits(command: &mut Command, profile: &Profile) {
+fn cgroup_limits(command: &mut Command, profile: &Profile, base: &Path) {
     let shared_cache = if profile.rootfs_mode == RootfsMode::Shared {
-        std::fs::metadata(&profile.rootfs).map(|m| m.len()).unwrap_or(0)
+        std::fs::metadata(base).map(|m| m.len()).unwrap_or(0)
     } else {
         0
     };

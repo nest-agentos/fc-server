@@ -10,6 +10,7 @@ pub mod mount_namespace;
 pub mod publication;
 #[path = "resource-operations.rs"]
 pub mod resource_operations;
+pub mod rootfs;
 pub mod supervisor;
 pub mod transport;
 pub mod virtiofs;

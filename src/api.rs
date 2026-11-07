@@ -40,6 +40,7 @@ pub fn router(manager: Shared, key: &str) -> Router {
         .route("/v1/profiles", get(profiles))
         .route("/v1/vms", get(list).post(create))
         .route("/v1/vms/:id", get(inspect).delete(stop))
+        .route("/v1/roots/:id", axum::routing::delete(delete_root))
         .route("/v1/vms/:id/ports", get(published_ports).post(publish_port))
         .route("/v1/vms/:id/ports/:protocol/:port", axum::routing::delete(unpublish_port))
         .route("/v1/vms/:id/connect/:port", post(connect))
@@ -115,6 +116,11 @@ async fn stop(
     Path(id): Path<String>,
 ) -> Result<Json<manager::StopResult>, Error> {
     mutation(api.manager, move |shared| resource_operations::stop_vm(shared, id)).await.map(Json)
+}
+
+async fn delete_root(State(api): State<Api>, Path(id): Path<String>) -> Result<Json<Value>, Error> {
+    mutation(api.manager, move |shared| resource_operations::delete_root(shared, id)).await?;
+    Ok(Json(json!({"deleted":true})))
 }
 async fn published_ports(
     State(api): State<Api>,

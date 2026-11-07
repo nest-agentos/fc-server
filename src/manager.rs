@@ -161,7 +161,9 @@ impl Manager {
         }
         let vm = &self.vms[id];
         serde_json::json!({"id":id,"profile":vm.spec.profile,"volumes":vm.spec.volumes,"directories":vm.spec.directories,
-            "state":"vmm-running","guestReady":false,"ageSecs":vm.born.elapsed().as_secs()})
+            "state":"vmm-running","guestReady":false,"ageSecs":vm.born.elapsed().as_secs(),
+            "rootfsPersistent":self.config.profiles[&vm.spec.profile].rootfs_persistent,
+            "ports":vm.publications.values().map(|port| &port.spec).collect::<Vec<_>>()})
     }
 
     pub fn busy(&self, volume: &str) -> bool {
@@ -195,10 +197,8 @@ impl Manager {
         self.vms
             .iter_mut()
             .filter_map(|(id, vm)| {
-                let expired = vm.born.elapsed()
-                    >= Duration::from_secs(
-                        self.config.profiles[&vm.spec.profile].max_lifetime_secs,
-                    );
+                let lifetime = self.config.profiles[&vm.spec.profile].max_lifetime_secs;
+                let expired = lifetime != 0 && vm.born.elapsed() >= Duration::from_secs(lifetime);
                 let exited = !matches!(vm.child.try_wait(), Ok(None));
                 let backend_exited =
                     vm.backend.as_mut().is_some_and(|child| !matches!(child.try_wait(), Ok(None)));

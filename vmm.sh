@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build as the invoking user; only dependency installation/deployment uses sudo.
+# Manage VMs and build as the invoking user; privileged operations use sudo.
 set -Eeuo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 stage=init
@@ -7,20 +7,25 @@ trap 'printf "[build] stage=%s result=failed line=%s exit=%s\n" "$stage" "$LINEN
 
 usage() {
     cat <<'EOF'
-Usage: ./build.sh [build|deps|install|setup|network|shared-root|start|stop|ssh|ip|publish|unpublish|ports|check|smoke|package|help]
-  build    Build server, fork, virtiofsd, guest kernel and Debian 13 ext4 (default).
+Usage: ./vmm.sh [COMMAND] [ARGS...]
+No command: show this help.
+
+  build    Build release server/fork, virtiofsd, guest kernel and Debian 13 ext4.
   deps     Install Debian/Ubuntu host dependencies and rustup if missing.
   install  Deploy built artifacts, initial config, key and systemd unit as root.
+  install-server  Build/deploy only server and host helpers; preserve all VM images/config.
   setup    Run deps, build, install, check. Does not start/enable the service.
   network  Prepare SSH key/image, per-VM egress NAT/DHCP/DNS, deploy, restart an idle server.
   shared-root  Build/deploy shared read-only DAX base and private OverlayFS root; restart an idle server.
   ssh ID   Log into a running VM as agent, with the dedicated local SSH key.
   ip ID    Print the private IPv4 address of a running VM.
+  list [--all] [--json]  List running VMs; --all includes stopped services/retained roots.
   publish ID HOST:GUEST[/tcp|udp] [--listen IPv4]  Publish a port via nftables (default: 127.0.0.1).
   unpublish ID HOST[/tcp|udp]  Remove a published port and its tracked NAT flows.
   ports ID  List a VM's published TCP/UDP ports.
   start ID [DIRECTORY...]  Create a debian13 VM, optionally with authorized directory bindings.
-  stop ID  Delete a VM and its temporary root disk; persistent volumes are retained.
+  stop ID  Stop a VM; persistent roots/volumes are retained, temporary root disks deleted.
+  service <install|setup|start|up|stop|destroy|status> ...  Manage generic guest services.
   check    Check installed paths, config, KVM, cgroup v2 and namespace support.
   smoke    Run real KVM block-volume and virtio-fs acceptance with disposable fixtures.
   package  Create zstd kernel/rootfs archives and refresh SHA256SUMS.
@@ -47,7 +52,7 @@ EOF
 
 log() { printf '[build] stage=%s %s\n' "$stage" "$*" >&2; }
 die() { log "result=failed reason=$*"; exit 1; }
-need() { command -v "$1" >/dev/null || die "missing $1; run ./build.sh deps"; }
+need() { command -v "$1" >/dev/null || die "missing $1; run ./vmm.sh deps"; }
 as_root() {
     if (( EUID == 0 )); then "$@"; else sudo -- "$@"; fi
 }
@@ -221,7 +226,7 @@ build_all() {
     (cd -- "$root"; CARGO_TARGET_DIR="$server_target" cargo build --locked --release --bin firecracker-server)
     install -m 0755 "$server_target/release/firecracker-server" "$build_dir/bin/firecracker-server"
     package_images
-    log "result=success artifacts=$build_dir; deploy with ./build.sh install"
+    log "result=success artifacts=$build_dir; deploy with ./vmm.sh install"
     exec 9>&-
 }
 
@@ -254,13 +259,29 @@ package_only() {
 
 deploy() {
     stage=install
-    [[ -f $build_dir/SHA256SUMS ]] || die 'build artifacts first with ./build.sh build'
+    [[ -f $build_dir/SHA256SUMS ]] || die 'build artifacts first with ./vmm.sh build'
     exec 9>"$build_dir/.lock"
     flock -n 9 || die 'another build/install is using BUILD_DIR'
     (cd -- "$build_dir"; sha256sum --check SHA256SUMS)
     as_root python3 "$root/scripts/install-environment.py" "$build_dir" "$root"
     exec 9>&-
     log 'result=success; start with sudo systemctl enable --now firecracker-server'
+}
+
+deploy_server() {
+    stage=server
+    (( EUID != 0 )) || die 'build/install-server as your regular user; sudo is used for deployment'
+    need cargo
+    local server_build="$build_dir/server-only"
+    mkdir -p "$server_build/bin"
+    exec 9>"$build_dir/.lock"
+    flock -n 9 || die 'another build/install is using BUILD_DIR'
+    (cd -- "$root"; CARGO_TARGET_DIR="$server_target" cargo build --locked --release --bin firecracker-server)
+    install -m 0755 "$server_target/release/firecracker-server" "$server_build/bin/firecracker-server"
+    (cd -- "$server_build"; sha256sum bin/firecracker-server > SHA256SUMS)
+    as_root python3 "$root/scripts/install-environment.py" "$server_build" "$root" --server-only
+    exec 9>&-
+    log 'result=success; images/config preserved; start firecracker-server explicitly'
 }
 
 check_host() {
@@ -288,7 +309,7 @@ network_setup() {
     as_root systemctl stop firecracker-server
     deploy
     as_root systemctl enable --now firecracker-server
-    log 'result=success; create a VM, then ./build.sh ssh VM_ID'
+    log 'result=success; create a VM, then ./vmm.sh ssh VM_ID'
 }
 
 shared_root_setup() {
@@ -307,7 +328,7 @@ shared_root_setup() {
 }
 
 ssh_vm() {
-    local vm=${1:?usage: ./build.sh ssh VM_ID [COMMAND...]}
+    local vm=${1:?usage: ./vmm.sh ssh VM_ID [COMMAND...]}
     shift
     local address alias
     read -r address alias < <(as_root python3 "$root/scripts/network-environment.py" address "$vm")
@@ -326,7 +347,7 @@ smoke() {
     if systemctl is-active --quiet firecracker-server 2>/dev/null; then
         die 'isolated smoke needs the deployed server stopped; use scripts/smoke-network.py for online network checks'
     fi
-    [[ -f $build_dir/SHA256SUMS ]] || die 'build artifacts first with ./build.sh build'
+    [[ -f $build_dir/SHA256SUMS ]] || die 'build artifacts first with ./vmm.sh build'
     exec 9>"$build_dir/.lock"
     flock -sn 9 || die 'another build/install is using BUILD_DIR'
     PATH="$build_dir/bin:$PATH" python3 "$root/scripts/smoke.py" "$build_dir/bin/firecracker-server" \
@@ -340,15 +361,18 @@ smoke() {
     exec 9>&-
 }
 
-case ${1:-build} in
+case ${1:-help} in
     help|-h|--help) usage ;;
     build) init; build_all ;;
     deps) init; dependencies ;;
     install) init; deploy ;;
+    install-server) init; deploy_server ;;
     setup) init; dependencies; build_all; deploy; check_host ;;
     network) init; network_setup ;;
     shared-root) init; shared_root_setup ;;
     ssh) init; ssh_vm "${@:2}" ;;
+    service) init; as_root python3 "$root/scripts/service-environment.py" "${@:2}" ;;
+    list) init; as_root python3 "$root/scripts/service-list.py" "${@:2}" ;;
     ip) init; as_root python3 "$root/scripts/network-environment.py" address "${2:?VM_ID required}" | cut -d ' ' -f 1 ;;
     start|stop) init; as_root python3 "$root/scripts/network-environment.py" "$1" "${2:?VM_ID required}" "${@:3}" ;;
     publish|unpublish|ports) init; as_root python3 "$root/scripts/network-environment.py" "$1" "${@:2}" ;;

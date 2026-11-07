@@ -46,6 +46,16 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(environment.read_bytes(), original_key)
             self.assertEqual(stat.S_IMODE(environment.stat().st_mode), 0o600)
 
+    def test_server_only_install_never_writes_images_or_config(self):
+        with patch.object(installer, 'directory'), patch.object(installer, 'trusted'), \
+                patch.object(installer, 'atomic_file') as write, patch.object(installer.subprocess, 'run'):
+            installer.install_server(self.directory, REPO)
+        targets = [str(call.args[0]) for call in write.call_args_list]
+        self.assertIn('/usr/local/bin/firecracker-server', targets)
+        self.assertIn('/etc/systemd/system/firecracker-workload@.service', targets)
+        self.assertFalse(any(path.startswith(('/var/lib/mindos-images/', '/etc/mindos-firecracker/'))
+                             for path in targets))
+
     def test_failed_copy_preserves_existing_artifact(self):
         target = self.directory / "rootfs.ext4"
         target.write_bytes(b"previous image")

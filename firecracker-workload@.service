@@ -1,0 +1,20 @@
+[Unit]
+Description=Firecracker managed workload %i
+Requires=firecracker-server.service
+After=firecracker-server.service
+PartOf=firecracker-server.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/local/bin/firecracker-server service run %i
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=400
+TimeoutStopSec=100
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target firecracker-server.service

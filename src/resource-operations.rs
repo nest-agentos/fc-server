@@ -97,6 +97,31 @@ pub async fn stop_vm(shared: Shared, id: String) -> Result<StopResult, Error> {
     }
 }
 
+pub async fn delete_root(shared: Shared, id: String) -> Result<(), Error> {
+    if !crate::config::valid_id(&id) {
+        return Err(Error::new(axum::http::StatusCode::BAD_REQUEST, "INVALID_ID", "root_delete"));
+    }
+    let _serial = resource_lock(&shared, "vm", &id).await;
+    let config = {
+        let manager = shared.lock().await;
+        if manager.closing
+            || manager.vms.contains_key(&id)
+            || manager.pending_vms.contains_key(&id)
+            || launcher::jail(&manager.config, &id).exists()
+            || launcher::cgroup(&id).exists()
+            || crate::virtiofs::group(&id).exists()
+        {
+            return Err(conflict("ROOT_DISK_BUSY"));
+        }
+        manager.config.clone()
+    };
+    let operation = uuid::Uuid::new_v4().to_string();
+    let started = Instant::now();
+    let result = crate::rootfs::delete(&config, &id).await;
+    audit(&operation, "root_delete", "persistent_root_removed", started, result.is_ok());
+    result
+}
+
 pub async fn create_volume(shared: Shared, volume: Volume) -> Result<Volume, Error> {
     create_volume_using(shared, volume, |config, volume| async move {
         volume::create(&config, &volume).await

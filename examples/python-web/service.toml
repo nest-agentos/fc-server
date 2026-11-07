@@ -1,0 +1,19 @@
+# Generic service package; no guest image changes or application-specific core code.
+id = "python-web"
+profile = "debian13"
+directories = []
+volumes = []
+working_directory = "/home/agent"
+command = ["/usr/bin/python3", "-m", "http.server", "8080", "--bind", "0.0.0.0", "--directory", "{service_dir}"]
+ready_port = 8080
+startup_timeout_secs = 60
+
+[[files]]
+source = "index.html"
+target = "index.html"
+
+[[publish]]
+listen = "127.0.0.1"
+host_port = 18080
+guest_port = 8080
+protocol = "tcp"

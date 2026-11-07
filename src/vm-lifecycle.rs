@@ -19,16 +19,9 @@ impl VmLauncher {
         uid: u32,
     ) -> Result<Vm, Error> {
         let deadline = Instant::now() + Duration::from_secs(profile.startup_timeout_secs);
-        let root = launcher::prepare(
-            &self.0,
-            &spec.id,
-            profile,
-            volumes,
-            &spec.directories,
-            uid,
-            deadline,
-        )
-        .await?;
+        let root =
+            launcher::prepare(&self.0, spec, profile, volumes, &spec.directories, uid, deadline)
+                .await?;
         let (child, backend) = self.launch_processes(spec, profile, &root, uid, deadline).await?;
         let vm = Vm::new(spec.clone(), uid, child, backend, profile.max_connections);
         Ok(vm)

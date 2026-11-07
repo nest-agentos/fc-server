@@ -345,7 +345,7 @@ def vm_action(command, vm, directories):
 
 def publication_action(command, arguments):
     import argparse
-    parser = argparse.ArgumentParser(prog='build.sh ' + command)
+    parser = argparse.ArgumentParser(prog='vmm.sh ' + command)
     parser.add_argument('vm')
     if command != 'ports':
         parser.add_argument('mapping')

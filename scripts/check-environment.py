@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only checks; real boot behavior is validated by build.sh smoke."""
+"""Read-only checks; real boot behavior is validated by vmm.sh smoke."""
 import os
 from pathlib import Path
 import shutil
@@ -69,7 +69,7 @@ def host():
         check(shutil.which(tool) is not None, f"host tool: {tool}")
     command(["unshare", "--mount", "--pid", "--net", "--fork", "true"])
     command(["bwrap", "--unshare-pid", "--unshare-net", "--ro-bind", "/", "/", "--", "/usr/bin/true"])
-    print("[check] namespace probes passed; run ./build.sh smoke for real KVM acceptance")
+    print("[check] namespace probes passed; run ./vmm.sh smoke for real KVM acceptance")
 
 
 if __name__ == "__main__":

@@ -80,19 +80,26 @@ def main():
     if os.geteuid() != 0:
         raise RuntimeError("installation requires root")
     build, repo = [Path(argument).resolve() for argument in sys.argv[1:3]]
+    if sys.argv[3:] not in ([], ['--server-only']):
+        raise RuntimeError('usage: install-environment.py BUILD REPO [--server-only]')
     # Holding the same lock as the server prevents replacement while it is running.
     with open("/run/mindos-firecracker.lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if subprocess.run(["systemctl", "is-active", "--quiet", "firecracker-server"]).returncode == 0:
             raise RuntimeError("stop firecracker-server before installing")
         config = Path("/etc/mindos-firecracker/config.toml")
+        if sys.argv[3:] and not config.exists():
+            raise RuntimeError('install-server requires an existing installation; run setup first')
         if config.exists():
             trusted(config)
             data = tomllib.loads(config.read_text())
             reserve_uids(data["uid_base"], data["max_vms"])
         else:
             reserve_uids()
-        install(build, repo)
+        if sys.argv[3:]:
+            install_server(build, repo)
+        else:
+            install(build, repo)
     print("Installed; existing config and API key preserved. Service has not been started.")
 
 
@@ -104,14 +111,9 @@ def install(build, repo):
         directory(path)
     for path in (images, config, Path("/var/lib/mindos-firecracker")):
         directory(path, 0o700)
-    helpers = Path('/usr/local/libexec/mindos-firecracker')
-    directory(helpers)
-    for name in ('network-environment.py', 'install-environment.py', 'publish-ports.py'):
-        atomic_file(helpers / name, 0o755, source=repo / 'scripts' / name)
+    install_server(build, repo)
     for name in ("firecracker", "jailer", "virtiofsd"):
         atomic_file(binaries / name, 0o755, source=build / "bin" / name)
-    atomic_file(Path("/usr/local/bin/firecracker-server"), 0o755,
-                source=build / "bin/firecracker-server")
     for name in ("vmlinux", "debian13.ext4", "debian13.ext4.initrd"):
         mode = 0o444 if name == 'debian13.ext4' else 0o600
         atomic_file(images / name, mode, source=build / "images" / name)
@@ -122,9 +124,21 @@ def install(build, repo):
     for name in ('codex', 'claude', 'dsh'):
         new_binding(Path(f'/srv/harness/{name}-home'), 0o700)
     initial_config(config, repo, binaries)
+
+
+def install_server(build, repo):
+    helpers = Path('/usr/local/libexec/mindos-firecracker')
+    directory(helpers)
+    for name in ('network-environment.py', 'install-environment.py', 'publish-ports.py',
+                 'service-environment.py', 'service-definition.py', 'service-guest.py', 'service-list.py'):
+        atomic_file(helpers / name, 0o755, source=repo / 'scripts' / name)
+    atomic_file(Path('/usr/local/bin/firecracker-server'), 0o755,
+                source=build / 'bin/firecracker-server')
     unit = Path("/etc/systemd/system/firecracker-server.service")
     trusted(unit.parent)
     atomic_file(unit, 0o644, source=repo / "firecracker-server.service")
+    atomic_file(unit.with_name('firecracker-workload@.service'), 0o644,
+                source=repo / 'firecracker-workload@.service')
     subprocess.run(["systemctl", "daemon-reload"], check=True)
 
 

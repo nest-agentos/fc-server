@@ -1,5 +1,29 @@
 # Firecracker server 验收记录
 
+统一管理入口为 `vmm.sh`，无参数显示帮助，显式 `build` 使用 release 构建。兼容脚本已删除，下文命令统一使用当前入口名称。
+
+## 2026-11-07：通用服务托管、持久根盘与 cell-x1
+
+后续补充顶层 `firecracker-server list [--all] [--json]` 和 `vmm.sh list`。已更新 release 二进制及已安装辅助脚本，在普通用户下直接执行成功，显示 `cell-x1` 为 `vmm-running / ready`、IP `10.203.0.2`、持久根盘及 `127.0.0.1:18787->8787/tcp`。列表只调用一次管理 API；本机单次快照耗时为 17–21 ms，不是前端页面性能验收。Python 服务回归现为 23 项，新增默认/全部列表、128 VM 单次 API、实例身份校验、无敏感信息输出和查询失败不得当作空列表的覆盖。Rust 26 项、部署 18 项、clippy/fmt 与语法检查通过；SSH 连接同时复测通过。
+
+在现有真实 KVM/网络环境上，仅更新管理程序、宿主辅助脚本及 systemd unit，没有重建或替换 Debian 镜像、内核或 fc-hp。Debian 镜像更新前后 inode 均为 `2924520`，SHA-256 均为 `c3f5fb4fdcb7387472f2c0c6c343698d29595bfd9ad638388a0947bd40b59c57`。
+
+新增通用服务包管理与显式持久根盘配置，服务命令、文件和环境均来自管理员安装的外部定义。实现及通用 Python HTTP 示例位于本仓库；cells 的实际服务定义和凭据仅保存在宿主私有 `/etc/mindos-firecracker/service-sources/cells-x1/`，核心没有 cells 分支。
+
+- Rust `cargo test --locked` 共 26 项通过，覆盖有限/无限生命周期、持久 private/shared 根盘复用、lower/内核/initrd 固定、存储配置冲突、活动根盘禁止删除、路径校验及既有 API 边界。
+- 通用服务 Python 回归 17 项、部署回归 18 项、端口发布回归 10 项通过。覆盖 guest 文件投递、包快照、只读/相对路径约束、服务更新锁、同 ID 实例替换保护、命令退出、已有监听拒绝、SSH EOF 回收、上传超时及不完整事件不能阻塞超时。
+- Rust fmt/clippy（全部 target，warnings 为错误）、Bash/Python 语法、systemd unit 校验与 diff 空白检查通过。
+- 创建并保留 `cell-x1`，使用通用 `services` profile：2 vCPU / 1024 MiB、2 GiB 持久 upper、同路径直通 `/home/li/share/prj`，显式无限生命周期。已有网络槽位复用，未更新 guest 镜像。
+- cells 0.4.4 通过复制的专用配置和启动脚本运行；身份为 `cell-x1`，通过宿主 `127.0.0.1:18787` 访问。认证、文件读取、进程执行、projects/sync/harness 能力发现通过。未认证请求返回 401。
+- 宿主原 cells 继续使用 8787。并行验证将 x1 等已有业务导出设为只读，独立 `vm-write` 导出 `/home/li/share/prj/tmp/cell-x1` 可写。真实 bubblewrap 命令在 guest 中写文件，宿主和 cells HTTP 均能读取。
+- 宿主端口占用返回冲突；尝试删除活动 VM 根盘返回 409。首次只读导出与遗留可写 grant 冲突时，cells 明确拒绝启动；修正外部配置后恢复，失败未删除持久根盘。
+- 分别重建 VM、重启管理服务，以及停止管理服务后通过 `install-server` 更新再单独启动，均自动恢复 cells 和端口。普通 `/home/agent/.config` 文件、工具 home 文件及 `/etc/ssh` 主机身份保持一致；cells 进程 epoch 发生变化，确认是重新启动。
+- 对受管 workload 的宿主监督主进程发送 SIGKILL 后，systemd 自动重启监督；SSH 断连使 guest 应用退出，新监督复用原 VM 成功恢复服务与映射。该故障注入未强杀 VMM/管理服务，也不代表完成了宿主断电一致性验证。
+
+受管服务保持 active/enabled，宿主开机和管理服务启动依赖均已启用；没有实际重启宿主。启动阶段的 TCP 就绪不等于前端页面性能验收，本次没有修改 UI/RPC 路径，也未声明页面性能达标。没有执行真实模型请求或迁移宿主 harness 认证凭据。
+
+HTTP/SSH 验收驱动和会创建测试子进程的回归均使用仓库 temporary-process 有界作用域，已等待关闭回执。验收用的用户目录标记、共享目录标记文件和包含认证信息的临时上下文均已删除；保留的 `cell-x1` 是用户要求的受管部署，使用正式 systemd/VM 生命周期。无凭据的分阶段结果记录位于 `/var/tmp/fc-cell-x1-{initial,recreated,manager-restart,final-deploy,supervisor-recovery}.json`；详细服务日志使用 `journalctl -u firecracker-workload@cell-x1` 查看。
+
 日期：2026-10-24。环境：Linux x86_64、真实 `/dev/kvm`、cgroup v2、Debian 13 guest、Linux 6.18.54 guest 内核、Rust virtiofsd 1.14.0。测试仅使用临时授权目录和根盘副本；没有连接真实 Codex 凭据或 session。
 
 ## 构建与契约
@@ -59,12 +83,12 @@ Debian 制品位于 `/var/tmp/mindos-firecracker-debian13-clean.ext4`。基础�
 
 ## 自动环境构建
 
-`build.sh` 使用相邻 `../fc-hp`，完成 musl Firecracker/jailer、Cargo virtiofsd 1.14.0、Linux 6.18.54 和 4096 MiB Debian 13 ext4 构建。内核从清华镜像下载源码并通过固定的 kernel.org SHA-256 校验；guest APT 使用中科大镜像。再次构建复用 ext4，制品摘要写入忽略的 `build/SHA256SUMS`。
+`vmm.sh` 使用相邻 `../fc-hp`，完成 musl Firecracker/jailer、Cargo virtiofsd 1.14.0、Linux 6.18.54 和 4096 MiB Debian 13 ext4 构建。内核从清华镜像下载源码并通过固定的 kernel.org SHA-256 校验；guest APT 使用中科大镜像。再次构建复用 ext4，制品摘要写入忽略的 `build/SHA256SUMS`。
 
 - Bash 语法检查、ShellCheck、Python 编译检查通过。
 - `python3 scripts/test-build-environment.py`：7 项通过，覆盖重复安装保留配置/密钥、文件权限、失败复制不破坏原制品、符号链接拒绝、既有目录所有权保留及 UID 段冲突。
 - 私有 mount namespace 中实际安装、再次安装、`check-environment.py` 全部通过，确认配置和密钥保留；没有在宿主安装或启动长期服务。
-- `./build.sh smoke` 使用新内核、根盘及 Cargo daemon 通过完整真实 KVM/virtio-fs 验收：实时读写、源 FD 固定、排除子挂载、宿主只读、启动期限，以及 backend/supervisor/管理进程异常回收；测试 VM、临时目录和 cgroup 已清理，日志未泄露测试密钥。
+- `./vmm.sh smoke` 使用新内核、根盘及 Cargo daemon 通过完整真实 KVM/virtio-fs 验收：实时读写、源 FD 固定、排除子挂载、宿主只读、启动期限，以及 backend/supervisor/管理进程异常回收；测试 VM、临时目录和 cgroup 已清理，日志未泄露测试密钥。
 - guest 内核显式关闭 `CONFIG_FUSE_DAX`。此 fork 没有 DAX shared-memory region，开启时 virtio-fs 驱动探测报 `could not reserve region addr=0x0 len=0x0`，随后挂载报 tag not found。
 
 新构建制品 SHA-256（server、Firecracker/jailer 沿用上述版本）：
@@ -115,7 +139,7 @@ Debian 制品位于 `/var/tmp/mindos-firecracker-debian13-clean.ext4`。基础�
 - nftables 两层规则经过 `nft --check` 校验并实际应用。SSH/PTY、DNS、公网 HTTPS 在两个临时 VM 上通过；两台 VM 的主机密钥不同。
 - guest 到宿主 `192.168.31.10`、路由器 `192.168.31.1`、metadata `169.254.169.254` 和另一台 VM 的连接均被阻断。
 - 两台测试 VM 在 POST 返回后约 2381 / 2378 ms 可通过 SSH 执行命令，测试后均正常关机回收。测试记录不包含真实模型认证请求。
-- `./build.sh start/ssh/stop` 已由普通宿主用户实测，guest 为 UID 1000，CLI 测试 VM 正常关机。为用户保留的 `demo` 挂载 project，地址 `10.203.0.2`，三个运行时版本验证通过。
+- `./vmm.sh start/ssh/stop` 已由普通宿主用户实测，guest 为 UID 1000，CLI 测试 VM 正常关机。为用户保留的 `demo` 挂载 project，地址 `10.203.0.2`，三个运行时版本验证通过。
 - 管理服务最初启动后的双 VM 根盘测试也通过：A 写入文件后 B 不存在该文件，B 写同名文件不改变 A；两台均正常关闭。
 
 日志：`/var/tmp/fc-server-ssh-image-build.log`、`/var/tmp/fc-server-network-deploy.log`、`/var/tmp/fc-server-network-check.log`、`/var/tmp/fc-server-network-smoke.log`。当前实际部署已包含网络/SSH，与前文仅在 mount namespace 内测试安装的阶段不同。
@@ -130,7 +154,7 @@ Debian 制品位于 `/var/tmp/mindos-firecracker-debian13-clean.ext4`。基础�
 - 两 VM 的最终回归采样共同驻留 **180617216 bytes（172.25 MiB）**，对应 PFN 差异为 0。修改同一 `/home/agent/.bashrc` 后，各自读取到自己的内容；guest root 直接尝试写 `/dev/pmem0` 后，宿主基础镜像 SHA-256 保持不变。停止并重建 VM 后，私有修改消失。
 - 100 个 VM 全部正常关机回收。该测试验证基础系统、共享 mmap 和隔离；未运行 100 个并发 Codex/Claude/DSH 模型会话。guest 内核、堆、栈、普通 read 缓冲和 OverlayFS copy-up 仍独立占用资源；文件 copy-up 是整文件复制。
 - `cargo test --locked`：4 个库测试及 15 个边界测试通过。构建/部署 Python 回归 17 项通过，包含迁移幂等、保留网络配置、自定义镜像拒绝、100 槽位独立性。ShellCheck、Bash/Python 语法及真实 KVM 块卷、virtio-fs 完整回归通过。
-- 本机已通过 `./build.sh shared-root` 切换内置 profile，原配置备份到 `/etc/mindos-firecracker/config.before-shared-root.toml`；API key、目录绑定和 4 个网络槽位核对一致。服务保持启动并开机启用；日常并发上限仍为 4，程序支持配置到 128。
+- 本机已通过 `./vmm.sh shared-root` 切换内置 profile，原配置备份到 `/etc/mindos-firecracker/config.before-shared-root.toml`；API key、目录绑定和 4 个网络槽位核对一致。服务保持启动并开机启用；日常并发上限仍为 4，程序支持配置到 128。
 - 部署后的共享模式通过 SSH/PTY、不同主机密钥、DNS/HTTPS、宿主/私网/metadata/跨 VM 阻断验收；两个 VM 创建后约 2402 / 2405 ms 可执行 SSH 命令，随后正常回收。
 - 最后从已部署共享根盘经 SSH 执行镜像检查：Node v24.22.1、Codex 0.164.0、Claude Code 2.1.209、DSH 0.2.0-rc.2 均通过，版本探测约 7 / 65 / 186 / 80 ms。测试 VM 正常关闭，没有留下活动 VM。
 - 两 VM 组合验收同时挂载 PMEM 共享根盘、live virtio-fs 和独立 virtio-blk 持久卷；停止并重建后，根盘私有修改消失，持久卷中的 `durable` 标记保留。此项验证使用独立测试目录，没有读写生产绑定数据。
@@ -141,7 +165,7 @@ Debian 制品位于 `/var/tmp/mindos-firecracker-debian13-clean.ext4`。基础�
 
 ## 2026-10-25：nftables TCP/UDP 端口发布
 
-已实现并部署 `./build.sh publish VM HOST:GUEST[/tcp|udp] [--listen IPv4]`、`unpublish VM HOST[/tcp|udp]` 和 `ports VM`。默认只绑定 127.0.0.1，显式指定 0.0.0.0 时允许宿主所有 IPv4 接口入站；两端端口为 1..65535，每 VM 最多 16 条。发布使用独立管理 API，profile 的 `ports` 继续表示 vsock 授权。
+已实现并部署 `./vmm.sh publish VM HOST:GUEST[/tcp|udp] [--listen IPv4]`、`unpublish VM HOST[/tcp|udp]` 和 `ports VM`。默认只绑定 127.0.0.1，显式指定 0.0.0.0 时允许宿主所有 IPv4 接口入站；两端端口为 1..65535，每 VM 最多 16 条。发布使用独立管理 API，profile 的 `ports` 继续表示 vsock 授权。
 
 - 真实 VM 与原生 CLI 验收通过：宿主 loopback 的 TCP/UDP，以及隔离外部客户端 netns 经宿主 `198.18.255.1` 的 TCP/UDP，均到达正确 guest 的 8080 服务；绑定 loopback 的映射不能从这个外部网段访问。
 - 本机应用已占用端口、另一个 VM 的 wildcard 端口均被拒绝为 `HOST_PORT_IN_USE`；相同映射重复发布不增加记录。管理服务保留绑定 socket，但转发数据直接走内核 DNAT/SNAT，不经过代理进程。

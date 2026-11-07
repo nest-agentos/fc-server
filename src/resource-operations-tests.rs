@@ -52,6 +52,61 @@ fn shared(root: &std::path::Path) -> Shared {
 }
 
 #[tokio::test]
+async fn root_deletion_requires_detached_vm_and_valid_id() {
+    let root = tempfile::tempdir().unwrap();
+    let shared = shared(root.path());
+    let disk = crate::rootfs::directory(&shared.lock().await.config, "retained");
+    std::fs::create_dir_all(&disk).unwrap();
+    std::fs::write(disk.join("rootfs.ext4"), b"user-state").unwrap();
+    let spec = CreateVm {
+        id: "retained".into(),
+        profile: "test".into(),
+        volumes: vec![],
+        directories: vec![],
+    };
+    let child = tokio::process::Command::new("/bin/true").spawn().unwrap();
+    shared.lock().await.vms.insert("retained".into(), Vm::new(spec, 200000, child, None, 1));
+    assert_eq!(
+        delete_root(shared.clone(), "retained".into()).await.unwrap_err().code,
+        "ROOT_DISK_BUSY"
+    );
+    assert_eq!(
+        delete_root(shared.clone(), "../outside".into()).await.unwrap_err().code,
+        "INVALID_ID"
+    );
+    shared.lock().await.vms.get_mut("retained").unwrap().child.wait().await.unwrap();
+    shared.lock().await.vms.remove("retained");
+    delete_root(shared, "retained".into()).await.unwrap();
+    assert!(!disk.exists());
+}
+
+#[tokio::test]
+async fn unlimited_lifetime_still_reaps_exited_vms() {
+    let root = tempfile::tempdir().unwrap();
+    let shared = shared(root.path());
+    let child =
+        tokio::process::Command::new("/bin/sleep").arg("60").kill_on_drop(true).spawn().unwrap();
+    let spec = CreateVm {
+        id: "retained".into(),
+        profile: "test".into(),
+        volumes: vec![],
+        directories: vec![],
+    };
+    let mut vm = Vm::new(spec, 200000, child, None, 1);
+    vm.born = std::time::Instant::now() - Duration::from_secs(120);
+    let mut manager = shared.lock().await;
+    manager.config.profiles.get_mut("test").unwrap().max_lifetime_secs = 0;
+    manager.vms.insert("retained".into(), vm);
+    assert!(manager.expired_vms().is_empty());
+    manager.config.profiles.get_mut("test").unwrap().max_lifetime_secs = 30;
+    assert_eq!(manager.expired_vms(), vec!["retained"]);
+    manager.config.profiles.get_mut("test").unwrap().max_lifetime_secs = 0;
+    let vm = manager.vms.get_mut("retained").unwrap();
+    vm.child.kill().await.unwrap();
+    assert_eq!(manager.expired_vms(), vec!["retained"]);
+}
+
+#[tokio::test]
 async fn slow_import_does_not_block_queries_or_another_vm_stop() {
     let root = tempfile::tempdir().unwrap();
     let shared = shared(root.path());

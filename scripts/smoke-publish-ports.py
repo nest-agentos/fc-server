@@ -55,7 +55,7 @@ def publish(request, vm, port, protocol='tcp', listen='127.0.0.1'):
 
 
 def cli_publish(vm, port, protocol='tcp', listen='127.0.0.1'):
-    script = Path(__file__).resolve().parents[1] / 'build.sh'
+    script = Path(__file__).resolve().parents[1] / 'vmm.sh'
     result = json.loads(call(script, 'publish', vm, f'{port}:8080/{protocol}', '--listen', listen).stdout)
     assert result['listen'] == listen and result['protocol'] == protocol, result
 
@@ -144,7 +144,7 @@ def collisions(request, vm, wildcard_port):
 
 def unpublish(request, vm, port):
     for protocol in ('tcp', 'udp'):
-        call(Path(__file__).resolve().parents[1] / 'build.sh', 'unpublish', vm, f'{port}/{protocol}')
+        call(Path(__file__).resolve().parents[1] / 'vmm.sh', 'unpublish', vm, f'{port}/{protocol}')
     assert request('GET', f'/v1/vms/{vm}/ports')['ports'] == []
     denied(lambda: http('127.0.0.1', port))
     denied(lambda: udp('127.0.0.1', port))

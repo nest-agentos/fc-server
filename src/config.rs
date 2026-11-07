@@ -30,6 +30,8 @@ pub struct Profile {
     pub rootfs: PathBuf,
     #[serde(default)]
     pub rootfs_mode: RootfsMode,
+    #[serde(default)]
+    pub rootfs_persistent: bool,
     pub initrd: Option<PathBuf>,
     #[serde(default = "default_upper_size")]
     pub upper_size_mib: u32,
@@ -240,7 +242,7 @@ impl Profile {
             "vcpus must be 1 or even, at most 32"
         );
         ensure!((128..=65536).contains(&self.memory_mib), "memory_mib must be 128..65536");
-        ensure!((1..=86400).contains(&self.max_lifetime_secs), "invalid lifetime");
+        ensure!(self.max_lifetime_secs <= 86400, "invalid lifetime; 0 means administrator-managed");
         ensure!((1..=300).contains(&self.startup_timeout_secs), "invalid startup timeout");
         ensure!((1..=64).contains(&self.max_connections), "invalid connection limit");
         ensure!(!self.ports.is_empty() && self.ports.len() <= 16, "1..16 ports required");

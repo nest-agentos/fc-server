@@ -276,7 +276,7 @@ fn rejects_paths_and_policy_injection() {
 async fn authentication_and_origin_checks_cover_every_route() {
     let dir = tempfile::tempdir().unwrap();
     let app = router(config(dir.path()));
-    for path in ["/v1/health", "/v1/profiles", "/v1/vms", "/v1/volumes"] {
+    for path in ["/v1/health", "/v1/profiles", "/v1/vms", "/v1/volumes", "/v1/roots/test-vm"] {
         let request = Request::builder().uri(path).body(Body::empty()).unwrap();
         assert_eq!(app.clone().oneshot(request).await.unwrap().status(), StatusCode::UNAUTHORIZED);
         let request = Request::builder()
