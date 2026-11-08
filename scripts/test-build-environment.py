@@ -301,6 +301,37 @@ class ImageRecipeTests(unittest.TestCase):
             image_info.ssh_key()
 
 
+class VirtiofsdCapabilitiesTests(unittest.TestCase):
+    def build_with(self, features):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / 'bin').mkdir()
+            daemon = directory / 'daemon'
+            daemon.write_text("""#!/bin/sh
+case "$1" in
+--help) echo "--readonly --sandbox";;
+--print-capabilities) echo '{"features":[FEATURES]}';;
+--version) echo "fixture daemon";;
+esac
+""".replace('FEATURES', features))
+            daemon.chmod(0o755)
+            script = 'source "$1"; build_dir=$2; VIRTIOFSD=$3; build_daemon'
+            result = subprocess.run(['bash', '-c', script, 'capabilities-test', str(REPO / 'vmm.sh'),
+                                     str(directory), str(daemon)], capture_output=True, text=True)
+            return result, (directory / 'bin/virtiofsd').exists()
+
+    def test_unpatched_external_daemon_is_rejected_before_copy(self):
+        result, copied = self.build_with('"separate-options"')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('lacks FUSE_STATX', result.stderr)
+        self.assertFalse(copied)
+
+    def test_statx_daemon_is_accepted(self):
+        result, copied = self.build_with('"statx"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(copied)
+
+
 class NetworkPlanTests(unittest.TestCase):
     def test_slots_have_disjoint_addresses_and_mac_addresses(self):
         guest, uplink = map(ipaddress.ip_network, ('10.203.0.0/16', '10.204.0.0/16'))

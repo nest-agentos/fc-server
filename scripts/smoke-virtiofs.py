@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shlex
 import shutil
 import subprocess
 import sys
@@ -98,6 +99,7 @@ def share_fixture(fixture):
     source = fixture / "source"
     source.mkdir()
     (source / "probe").write_text("authorized")
+    (source / "internal-link").symlink_to("probe")
     (source / "nested").mkdir()
     (source / "sessions").mkdir()
     (fixture / "alias").mkdir()
@@ -118,6 +120,20 @@ def image_probe(binary, address, vm, env):
     output = smoke.guest(binary, address, vm, env, command, 'IMAGE_INFO=')
     return json.loads(next(line.removeprefix('IMAGE_INFO=') for line in output.splitlines()
                            if line.startswith('IMAGE_INFO=')))
+
+
+def birth_probe(binary, address, vm, env, fixture, target):
+    for relative in ["", "probe", "internal-link"]:
+        source = fixture / "pinned" / relative
+        expected = subprocess.check_output(
+            ["env", "TZ=UTC", "stat", "-c", "%W:%w", str(source)], text=True).strip()
+        assert not expected.endswith(":-"), "test source must support directory/file birth time"
+        path = str(Path(target) / relative)
+        command = "printf 'STATX_BIRTH='; TZ=UTC stat -c '%W:%w' " + shlex.quote(path) + "\n"
+        output = smoke.guest(binary, address, vm, env, command, "STATX_BIRTH=")
+        actual = next(line.removeprefix("STATX_BIRTH=") for line in output.splitlines()
+                      if line.startswith("STATX_BIRTH="))
+        assert actual == expected, ("STATX_BIRTH_MISMATCH", relative, expected, actual)
 
 
 def host_io(binary, address, vm, env, fixture):
@@ -143,6 +159,8 @@ def read_write(binary, address, key, env, vm, fixture, evidence):
     smoke.guest(binary, address, vm, env, command, "LIVE_RW_OK")
     evidence['guest_ready_ms'] = round((time.monotonic() - started) * 1000)
     evidence['image'] = image_probe(binary, address, vm, env)
+    birth_probe(binary, address, vm, env, fixture, "/workspace/project")
+    evidence["statxBirthTime"] = True
     host_io(binary, address, vm, env, fixture)
     assert smoke.request(address, key, "DELETE", f"/v1/vms/{vm}")["mode"] == "guest-shutdown"
     assert_empty(vm)
@@ -153,6 +171,7 @@ def read_write(binary, address, key, env, vm, fixture, evidence):
 def read_only(binary, address, key, env, vm, fixture):
     spec = {"id": vm, "profile": "debian13", "directories": ["reference"]}
     smoke.request(address, key, "POST", "/v1/vms", spec)
+    birth_probe(binary, address, vm, env, fixture, "/workspace/reference")
     command = "mount -o remount,rw /workspace/reference && "
     command += "findmnt -no OPTIONS /workspace/reference | grep -q '^rw,' && "
     command += "! touch /workspace/reference/denied 2>/dev/null && "

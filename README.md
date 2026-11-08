@@ -44,7 +44,7 @@ cd ~/share/prj/x1/tools/fc-server
 ./vmm.sh stop demo  # 删除 VM；临时根盘修改随之丢弃
 ```
 
-`build --os` 的完整构建包含服务 release、fork 指定 toolchain 的 musl Firecracker/jailer、Rust virtiofsd、内建 virtio-fs/vsock/ext4/i8042 的 Linux 6.18.54 内核，以及默认 **2048 MiB（2 GiB）** 的 Debian 13 根盘。默认 `GUEST_FLAVOR=harness` 预装 Codex、Claude Code、DSH；`GUEST_FLAVOR=base` 只构建精简基础系统。内核源码由 kernel.org 下载，校验脚本固定的 SHA-256；制品哈希写入 `build/SHA256SUMS`。virtiofsd 优先采用支持 `--readonly` 的系统版本，否则通过 Cargo 安装固定 1.14.0。内核配置以 fork 自带的 6.18 microVM 配置为基础，显式启用直通与正常关闭所需选项，并关闭 `CONFIG_FUSE_DAX`：该分支没有 DAX shared-memory region，开启时 guest virtio-fs 探测会失败。
+`build --os` 的完整构建包含服务 release、fork 指定 toolchain 的 musl Firecracker/jailer、Rust virtiofsd、内建 virtio-fs/vsock/ext4/i8042 的 Linux 6.18.54 内核，以及默认 **2048 MiB（2 GiB）** 的 Debian 13 根盘。默认 `GUEST_FLAVOR=harness` 预装 Codex、Claude Code、DSH；`GUEST_FLAVOR=base` 只构建精简基础系统。内核源码由 kernel.org 下载，校验脚本固定的 SHA-256；制品哈希写入 `build/SHA256SUMS`。virtiofsd 从校验 SHA-256 的固定 1.14.0 源码构建，并应用 `patches/virtiofsd-statx.patch`，支持 FUSE 7.39 `STATX`，透传宿主实际提供的创建时间；包含 UID/GID 映射、文件句柄校验和只读模式转发。构建按补丁/脚本及二进制摘要复用缓存，不自动选用未修补的系统 daemon。内核配置以 fork 自带的 6.18 microVM 配置为基础，显式启用直通与正常关闭所需选项，并关闭 `CONFIG_FUSE_DAX`：该分支没有 DAX shared-memory region，开启时 guest virtio-fs 探测会失败。
 
 运行镜像保留 Bash、Git、Python、bubblewrap、systemd、udev、网络基础组件及非 root vsock 服务。默认还安装 less、Vim、fd（Debian 的 fd-find，提供 fd 命令）、ripgrep、procps（top/ps/free）、iproute2（ip/ss）、curl、jq、file、tree、lsof、ping、dig、unzip、rsync、psmisc（pstree/killall）。基础版和 harness 版都包含这些工具，导出镜像前以 agent 用户检查命令是否存在。man/info、语言翻译和普通文档在构建时裁剪，保留版权文件与 C.UTF-8；禁用 APT 更新、备份、fstrim 等定时任务、getty 及等待联网服务，journald 使用有界内存日志。systemd 继续负责服务隔离、挂载和正常关机。
 
@@ -356,11 +356,11 @@ cargo build --locked --release --target x86_64-unknown-linux-musl -p firecracker
 
 基线是 `edb60617c31ebd610c530f67706ec5c79d4c2725`，对应本次实现提交 `b3795fb9dfeff3dc9ab9b526f81827ab9480bd06`。依赖遵循该基线的 Rust toolchain 和 musl 构建要求；Debian 宿主若缺少 `linux/types.h`，可设置 `CFLAGS_x86_64_unknown_linux_musl="-idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu"`。使用 `build/cargo_target/x86_64-unknown-linux-musl/release/` 下的 firecracker/jailer；GNU debug 构建不能替代默认 seccomp 验收。补丁内的 `tools/virtiofs/build-kernel.sh` 可在新输出目录构建 guest 内核。
 
-参考 [直通配置](config.virtiofs.example.toml)，安装可信 Rust virtiofsd（已验证 1.14.0，必须支持 `--readonly`）。宿主还需 Linux 5.14+ 的 `openat2/open_tree/move_mount/mount_setattr/cgroup.kill`、mount/PID/network namespaces 和 bubblewrap；不支持这些边界时创建失败。服务仍需要 root，daemon 对绑定内部按 guest UID/GID 操作；可写授权包含 guest 对该目录的修改能力，不是凭据保密边界。
+参考 [直通配置](config.virtiofs.example.toml)，安装构建产出的 Rust virtiofsd（1.14.0 + STATX 补丁，必须支持 `--readonly`，`--print-capabilities` 的 features 包含 `statx`）。宿主还需 Linux 5.14+ 的 `openat2/open_tree/move_mount/mount_setattr/cgroup.kill`、mount/PID/network namespaces 和 bubblewrap；不支持这些边界时创建失败。服务仍需要 root，daemon 对绑定内部按 guest UID/GID 操作；可写授权包含 guest 对该目录的修改能力，不是凭据保密边界。
 
 ```toml
 # Global setting, before any TOML table.
-virtiofsd = "/usr/libexec/virtiofsd"
+virtiofsd = "/usr/local/libexec/firecracker-virtiofs/virtiofsd"
 
 [bindings.project]
 backend = "virtiofs"
@@ -443,3 +443,14 @@ cargo test --locked
 测试覆盖认证、Origin 拒绝、策略/路径注入、目录授权/占用、只读块设备、vsock 有界握手与 stdin EOF、真实 ext4 导入/重新加载。真实 Debian/KVM 验收使用 `scripts/smoke.py SERVER KERNEL IMAGE`；直通验收使用 `scripts/smoke-virtiofs.py SERVER KERNEL IMAGE FORK_FIRECRACKER FORK_JAILER VIRTIOFSD`。脚本要求免交互 sudo，只操作临时目录，失败不跳过；直通脚本仅在一次性镜像副本注入 root 测试端口，验证 guest remount 不能突破宿主只读授权。结果和限制见 [验收记录](VALIDATION.md)。
 
 实现依据：[Firecracker jailer](https://github.com/firecracker-microvm/firecracker/blob/main/docs/jailer.md)、[vsock 协议](https://github.com/firecracker-microvm/firecracker/blob/main/docs/vsock.md)、[生产宿主隔离要求](https://github.com/firecracker-microvm/firecracker/blob/main/docs/prod-host-setup.md)、[Debian 13](https://www.debian.org/releases/trixie/)。
+
+
+目录创建时间通过 FUSE `STATX` 返回，不能用修改时间伪造。宿主文件系统不支持创建时间时，响应保留实际 mask、不给出 BTIME；支持创建时间的 ext4 等源目录可让依赖稳定目录身份的上层完成注册。已有 VM 的 daemon 和 FUSE 协议在创建时确定，安装新 daemon 后使用 `./vmm.sh reboot VM_ID` 重新协商；无需重建 kernel、Debian image 或持久化根盘。显式 `VIRTIOFSD` 覆盖也必须声明 `statx` 能力。
+
+补丁单测（使用已构建的源码缓存）：
+
+```bash
+cargo test --locked --release --manifest-path build/cache/virtiofsd-1.14.0-statx/Cargo.toml --target-dir build/virtiofsd/target
+```
+
+真实 virtio-fs smoke 的 rw/ro 路径均校验目录、普通文件和符号链接的创建时间与宿主一致。

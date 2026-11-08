@@ -215,3 +215,16 @@ Debian 制品位于 `/var/tmp/mindos-firecracker-debian13-clean.ext4`。基础�
 - 升级前确认 cell-x1 guest 配置已与宿主快照不同。新监督进程启动日志记录 `preserved=2, written=0`，没有回写旧快照。应用因用户新增的 prj 根导出与旧验证项 vm-write 子目录重叠而退出；保留用户的 prj/rw 及其 owner 授权，仅移除旧验证项的导出配置，未删除目录文件。
 - 实际执行 `./vmm.sh reboot cell-x1` 成功，约 4122ms 后 ready；VM 实例标识改变，持久根盘 inode 相同，修正重叠项后的配置 SHA-256 在重启前后完全一致。cells 认证 capabilities/exports 验证通过，serverId=cell-x1，唯一导出为 prj/rw，代理和端口映射恢复，unit 保持 enabled。
 - 普通 VM 的 API/SSH 验收驱动在 temporary-process 内未能调用控制程序，因为其用户命名空间无法验证宿主私有目录绑定；没有宣称该真实分支通过。所属临时 VM、持久根盘及密钥副本均已清理，驱动取得结束回执；普通 VM 分支本次由 Rust 顺序/失败测试覆盖。正式受管 cell-x1 的重启是实际运行结果。
+
+## 2026-11-07 — virtio-fs 扩展目录元数据
+
+定位 Cells 注册共享目录失败：宿主 ext4 提供 birth time，guest 原 virtiofsd 1.14.0 仅协商 FUSE 7.38，未实现 `FUSE_STATX`。新增可复现的源码补丁，协商 FUSE 7.39 并处理 STATX；按宿主 mask 返回创建时间，不合成缺失字段，保留 UID/GID 映射、句柄校验及只读包装转发。C 头文件核对 ABI：statx=256、input=24、output=288 字节，btime 偏移 80、响应 stat 偏移 32。
+
+- virtiofsd release 测试：48 项单元测试、4 项文档测试通过，包含无 BTIME、无效 FD/句柄、非法 flags、UID/GID 映射、只读转发及协议布局。
+- 构建/部署 Python 回归：28 项通过；外部 daemon 未声明 statx 时拒绝构建，不再静默复用旧系统 daemon。
+- `./vmm.sh build` 通过，未请求 `--os`，日志确认跳过 kernel/rootfs；再次运行 daemon 构建复用 recipe/二进制摘要。
+- 已原子替换安装的 daemon，并通过正式管理生命周期重启 `cell-x1`；原持久根盘和 18787→8787 映射保留，服务 ready/active。
+- 真实 `cell-x1`：项目 `/home/li/share/prj/x1` 创建时间恢复；临时夹具的目录、子目录、普通文件、符号链接 birth time、inode、mode 与宿主一致。Cells `ro` 和 `rw` 项目注册、读取、解除注册通过；guest 写入在宿主可见。测试项目、源目录、临时 SSH known_hosts 和验证作用域均已清理。
+- 通用 virtio-fs smoke 补充 rw/ro 创建时间检查；本次未重跑需停用正式管理服务的完整崩溃矩阵。
+
+证据：`/var/tmp/fc-statx-vmm-build.log`、`/var/tmp/virtiofsd-statx-reuse.log`、`/var/tmp/virtiofsd-statx-pinned-tests.log`、`/var/tmp/fc-statx-build-regression-final.log`、`/var/tmp/fc-statx-deploy-reboot.log`、`/var/tmp/fc-statx-live-acceptance.log`、`/var/tmp/fc-statx-live-rw-acceptance.log`、`/var/tmp/fc-statx-live-receipt.json`。

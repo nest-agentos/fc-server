@@ -39,7 +39,7 @@ Environment:
   JOBS               Compiler parallelism (default: 8).
   KERNEL_IMAGE       With --os, use an existing compatible vmlinux instead of compiling.
   KERNEL_MIRROR      Kernel archive directory URL (default: kernel.org v6.x).
-  VIRTIOFSD          Use an existing Rust virtiofsd supporting --readonly.
+  VIRTIOFSD          Use an existing Rust virtiofsd advertising statx in --print-capabilities.
   IMAGE_SIZE_MIB     New Debian root disk size (default: 2048).
   GUEST_FLAVOR       harness (pinned Codex/Claude Code/DSH) or base (no Node/tools).
   NPM_REGISTRY       Registry used in the build stage; npm is absent at runtime.
@@ -86,7 +86,7 @@ dependencies() {
     stage=dependencies
     need apt-get
     as_root apt-get update
-    local packages=(build-essential git curl ca-certificates e2fsprogs bubblewrap
+    local packages=(build-essential git patch curl ca-certificates e2fsprogs bubblewrap
         musl-tools pkg-config libssl-dev libelf-dev libseccomp-dev libcap-ng-dev
         clang llvm flex bison bc cpio xz-utils zstd python3 sudo openssl openssh-client util-linux systemd)
     command -v docker >/dev/null || packages+=(docker.io)
@@ -128,22 +128,17 @@ build_fork() {
 
 build_daemon() {
     stage=virtiofsd
-    local daemon=${VIRTIOFSD:-} candidate help
+    local daemon=${VIRTIOFSD:-} help capabilities
     if [[ -z $daemon ]]; then
-        for candidate in /usr/libexec/virtiofsd /usr/lib/qemu/virtiofsd "$build_dir/virtiofsd/bin/virtiofsd"; do
-            if [[ -x $candidate ]] && help=$("$candidate" --help) && [[ $help == *--readonly* ]]; then
-                daemon=$candidate
-                break
-            fi
-        done
-    fi
-    if [[ -z $daemon ]]; then
-        cargo install --locked --version 1.14.0 --root "$build_dir/virtiofsd" virtiofsd
+        need patch
+        "$root/scripts/build-virtiofsd.sh" "$build_dir" "$jobs"
         daemon=$build_dir/virtiofsd/bin/virtiofsd
     fi
     [[ -x $daemon ]] || die "daemon is not executable: $daemon"
     help=$("$daemon" --help)
     [[ $help == *--readonly* && $help == *--sandbox* ]] || die 'Rust virtiofsd with --readonly and --sandbox required'
+    capabilities=$("$daemon" --print-capabilities)
+    [[ $capabilities == *'"statx"'* ]] || die 'virtiofsd lacks FUSE_STATX; unset VIRTIOFSD to build the patched daemon'
     install -m 0755 "$daemon" "$build_dir/bin/virtiofsd"
     "$build_dir/bin/virtiofsd" --version
 }

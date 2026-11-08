@@ -1,0 +1,394 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -110,3 +110,5 @@
+ 
+ [profile.release]
+ lto = true
++
++[workspace]
+--- a/src/fuse.rs
++++ b/src/fuse.rs
+@@ -14,7 +14,7 @@
+ pub const KERNEL_VERSION: u32 = 7;
+ 
+ /// Minor version number of this interface.
+-pub const KERNEL_MINOR_VERSION: u32 = 38;
++pub const KERNEL_MINOR_VERSION: u32 = 39;
+ 
+ /// Minimum Minor version number supported. If client sends a minor
+ /// number lesser than this, we don't support it.
+@@ -752,6 +752,7 @@
+         RemoveMapping = 49,
+         Syncfs = 50,
+         TmpFile = 51,
++        Statx = 52,
+     }
+ }
+ 
+@@ -821,6 +822,131 @@
+     pub attr: Attr,
+ }
+ unsafe impl ByteValued for AttrOut {}
++
++// FUSE 7.39 statx ABI: all reserved fields are initialized to zero.
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct SxTime {
++    pub sec: i64,
++    pub nsec: u32,
++    pub reserved: i32,
++}
++unsafe impl ByteValued for SxTime {}
++
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct Statx {
++    pub mask: u32,
++    pub blksize: u32,
++    pub attributes: u64,
++    pub nlink: u32,
++    pub uid: GuestUid,
++    pub gid: GuestGid,
++    pub mode: u16,
++    pub spare: u16,
++    pub ino: u64,
++    pub size: u64,
++    pub blocks: u64,
++    pub attributes_mask: u64,
++    pub atime: SxTime,
++    pub btime: SxTime,
++    pub ctime: SxTime,
++    pub mtime: SxTime,
++    pub rdev_major: u32,
++    pub rdev_minor: u32,
++    pub dev_major: u32,
++    pub dev_minor: u32,
++    pub spare2: [u64; 14],
++}
++unsafe impl ByteValued for Statx {}
++
++impl Statx {
++    pub fn from_host(st: libc::statx, uid: GuestUid, gid: GuestGid) -> Self {
++        let time = |t: libc::statx_timestamp| SxTime {
++            sec: t.tv_sec,
++            nsec: t.tv_nsec,
++            reserved: 0,
++        };
++        Self {
++            mask: st.stx_mask & 0xfff,
++            blksize: st.stx_blksize,
++            attributes: st.stx_attributes,
++            nlink: st.stx_nlink,
++            uid,
++            gid,
++            mode: st.stx_mode,
++            spare: 0,
++            ino: st.stx_ino,
++            size: st.stx_size,
++            blocks: st.stx_blocks,
++            attributes_mask: st.stx_attributes_mask,
++            atime: time(st.stx_atime),
++            ctime: time(st.stx_ctime),
++            mtime: time(st.stx_mtime),
++            btime: if st.stx_mask & 0x800 != 0 {
++                time(st.stx_btime)
++            } else {
++                SxTime::default()
++            },
++            rdev_major: st.stx_rdev_major,
++            rdev_minor: st.stx_rdev_minor,
++            dev_major: st.stx_dev_major,
++            dev_minor: st.stx_dev_minor,
++            spare2: [0; 14],
++        }
++    }
++}
++
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct StatxIn {
++    pub getattr_flags: u32,
++    pub reserved: u32,
++    pub fh: u64,
++    pub sx_flags: u32,
++    pub sx_mask: u32,
++}
++unsafe impl ByteValued for StatxIn {}
++
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct StatxOut {
++    pub attr_valid: u64,
++    pub attr_valid_nsec: u32,
++    pub flags: u32,
++    pub spare: [u64; 2],
++    pub stat: Statx,
++}
++unsafe impl ByteValued for StatxOut {}
++
++#[cfg(test)]
++mod statx_tests {
++    use super::*;
++    #[test]
++    fn statx_wire_layout_and_absent_birth_time() {
++        assert_eq!(std::mem::size_of::<SxTime>(), 16);
++        assert_eq!(std::mem::size_of::<Statx>(), 256);
++        assert_eq!(std::mem::size_of::<StatxIn>(), 24);
++        assert_eq!(std::mem::size_of::<StatxOut>(), 288);
++        assert_eq!(std::mem::offset_of!(StatxOut, stat), 32);
++        assert_eq!(std::mem::offset_of!(Statx, btime), 80);
++        let mut raw = unsafe { std::mem::zeroed::<libc::statx>() };
++        raw.stx_mask = 0x7ff;
++        raw.stx_btime.tv_sec = 123;
++        let wire = Statx::from_host(raw, GuestUid::from(1000), GuestGid::from(1001));
++        assert_eq!(wire.btime.sec, 0);
++        assert_eq!(wire.mask & 0x800, 0);
++        assert_eq!(wire.uid, GuestUid::from(1000));
++        assert_eq!(wire.gid, GuestGid::from(1001));
++        raw.stx_mask |= 0x800;
++        raw.stx_btime.tv_nsec = 456;
++        let wire = Statx::from_host(raw, GuestUid::from(0), GuestGid::from(0));
++        assert_eq!(
++            (wire.btime.sec, wire.btime.nsec, wire.btime.reserved),
++            (123, 456, 0)
++        );
++    }
++}
+ 
+ #[repr(C)]
+ #[derive(Debug, Default, Copy, Clone)]
+--- a/src/filesystem.rs
++++ b/src/filesystem.rs
+@@ -326,6 +326,18 @@
+         Err(io::Error::from_raw_os_error(libc::ENOSYS))
+     }
+ 
++    /// Get extended metadata, including birth time when the host supports it.
++    fn statx(
++        &self,
++        ctx: Context,
++        inode: Self::Inode,
++        handle: Option<Self::Handle>,
++        flags: u32,
++        mask: u32,
++    ) -> io::Result<(fuse::Statx, Duration)> {
++        Err(io::Error::from_raw_os_error(libc::ENOSYS))
++    }
++
+     /// Set attributes for a file / directory.
+     ///
+     /// If `handle` is not `None`, then it contains the handle previously returned by the
+--- a/src/server.rs
++++ b/src/server.rs
+@@ -171,6 +171,7 @@
+                 Opcode::RemoveMapping => self.removemapping(in_header, r, w, vu_req),
+                 Opcode::Syncfs => self.syncfs(in_header, w),
+                 Opcode::TmpFile => self.tmpfile(in_header, r, w),
++                Opcode::Statx => self.statx(in_header, r, w),
+             }
+         } else {
+             debug!(
+@@ -270,6 +271,31 @@
+                 reply_ok(Some(out), None, in_header.unique, w)
+             }
+             Err(e) => reply_error(e, in_header.unique, w),
++        }
++    }
++
++    fn statx(&self, in_header: InHeader, mut r: Reader, w: Writer) -> Result<usize> {
++        let input: StatxIn = r.read_obj().map_err(Error::DecodeMessage)?;
++        let handle = (input.getattr_flags & GETATTR_FH != 0).then(|| input.fh.into());
++        match self.fs.statx(
++            Context::from(in_header),
++            in_header.nodeid.into(),
++            handle,
++            input.sx_flags,
++            input.sx_mask,
++        ) {
++            Ok((stat, timeout)) => reply_ok(
++                Some(StatxOut {
++                    attr_valid: timeout.as_secs(),
++                    attr_valid_nsec: timeout.subsec_nanos(),
++                    stat,
++                    ..Default::default()
++                }),
++                None,
++                in_header.unique,
++                w,
++            ),
++            Err(error) => reply_error(error, in_header.unique, w),
+         }
+     }
+ 
+--- a/src/passthrough/mod.rs
++++ b/src/passthrough/mod.rs
+@@ -1953,6 +1953,31 @@
+         self.do_getattr(inode)
+     }
+ 
++    fn statx(
++        &self,
++        _ctx: Context,
++        inode: Inode,
++        handle: Option<Handle>,
++        flags: u32,
++        mask: u32,
++    ) -> io::Result<(fuse::Statx, Duration)> {
++        let value = if let Some(handle) = handle {
++            let data = self.find_handle(handle, inode)?;
++            let file = data.file.get()?.read().unwrap();
++            stat::extended_statx(file.as_raw_fd(), flags, mask)?
++        } else {
++            let data = self.inodes.get(inode).ok_or_else(ebadf)?;
++            let file = data.get_file()?;
++            stat::extended_statx(file.as_raw_fd(), flags, mask)?
++        };
++        let uid = self.map_host_uid(HostUid::from(value.stx_uid))?;
++        let gid = self.map_host_gid(HostGid::from(value.stx_gid))?;
++        Ok((
++            fuse::Statx::from_host(value, uid, gid),
++            self.cfg.attr_timeout,
++        ))
++    }
++
+     fn setattr(
+         &self,
+         _ctx: Context,
+@@ -2779,6 +2804,54 @@
+     use super::*;
+ 
+     #[test]
++    fn statx_maps_owners_checks_handles_and_forwards_read_only() {
++        let ctx = Context {
++            uid: GuestUid::from(0),
++            gid: GuestGid::from(0),
++            pid: std::process::id() as i32,
++        };
++        let config = || Config {
++            root_dir: ".".into(),
++            inode_file_handles: InodeFileHandlesMode::Never,
++            announce_submounts: false,
++            uid_map: Some(vec![soft_idmap::cmdline::IdMap::Host {
++                from_host: unsafe { libc::getuid() },
++                to_guest: 2000,
++                count: 1,
++            }]),
++            gid_map: Some(vec![soft_idmap::cmdline::IdMap::Host {
++                from_host: unsafe { libc::getgid() },
++                to_guest: 2001,
++                count: 1,
++            }]),
++            ..Default::default()
++        };
++        let fs = PassthroughFs::new(config()).unwrap();
++        fs.init(FsOptions::empty()).unwrap();
++        let (value, _) = fs.statx(ctx, fuse::ROOT_ID, None, 0, 0xfff).unwrap();
++        assert_eq!(value.uid, GuestUid::from(2000));
++        assert_eq!(value.gid, GuestGid::from(2001));
++        assert_eq!(
++            fs.statx(ctx, fuse::ROOT_ID, Some(u64::MAX), 0, 0xfff)
++                .unwrap_err()
++                .raw_os_error(),
++            Some(libc::EBADF)
++        );
++        assert_eq!(
++            fs.statx(ctx, u64::MAX, None, 0, 0xfff)
++                .unwrap_err()
++                .raw_os_error(),
++            Some(libc::EBADF)
++        );
++        let ro = read_only::PassthroughFsRo::new(config()).unwrap();
++        ro.init(FsOptions::empty()).unwrap();
++        let (read_only, _) = ro.statx(ctx, fuse::ROOT_ID, None, 0, 0xfff).unwrap();
++        assert_eq!(read_only.ino, value.ino);
++        assert_eq!(read_only.uid, value.uid);
++        assert_eq!(read_only.btime.sec, value.btime.sec);
++    }
++
++    #[test]
+     fn setxattr_non_utf8_name_does_not_clear_sgid() {
+         let name = CStr::from_bytes_with_nul(b"user.\xff\0").unwrap();
+ 
+--- a/src/passthrough/stat.rs
++++ b/src/passthrough/stat.rs
+@@ -149,3 +149,59 @@
+         Err(io::Error::last_os_error())
+     }
+ }
++
++/// Query a pinned inode without following a host path or exposing uninitialized bytes.
++pub(super) fn extended_statx(
++    fd: std::os::unix::io::RawFd,
++    flags: u32,
++    mask: u32,
++) -> io::Result<libc::statx> {
++    if flags & !(libc::AT_STATX_SYNC_TYPE as u32) != 0 {
++        return Err(io::Error::from_raw_os_error(libc::EINVAL));
++    }
++    let mut value = MaybeUninit::<libc::statx>::zeroed();
++    // SAFETY: the empty name is NUL terminated; the output is writable and checked before use.
++    let result = unsafe {
++        libc::syscall(
++            libc::SYS_statx,
++            fd,
++            EMPTY_CSTR.as_ptr(),
++            libc::AT_EMPTY_PATH | libc::AT_SYMLINK_NOFOLLOW | flags as i32,
++            (mask & 0xfff) | libc::STATX_BASIC_STATS,
++            value.as_mut_ptr(),
++        )
++    };
++    if result < 0 {
++        return Err(io::Error::last_os_error());
++    }
++    // SAFETY: the successful syscall initialized the zeroed output structure.
++    Ok(unsafe { value.assume_init() })
++}
++
++#[cfg(test)]
++mod extended_tests {
++    use super::*;
++    #[test]
++    fn statx_matches_host_birth_time_and_rejects_invalid_fd_and_flags() {
++        use std::os::unix::fs::MetadataExt;
++        let file = std::fs::File::open(".").unwrap();
++        let raw = extended_statx(file.as_raw_fd(), 0, 0xfff).unwrap();
++        assert_eq!(raw.stx_ino, file.metadata().unwrap().ino());
++        if let Ok(created) = file.metadata().unwrap().created() {
++            let stamp = created.duration_since(std::time::UNIX_EPOCH).unwrap();
++            assert_ne!(raw.stx_mask & libc::STATX_BTIME, 0);
++            assert_eq!(raw.stx_btime.tv_sec, stamp.as_secs() as i64);
++            assert_eq!(raw.stx_btime.tv_nsec, stamp.subsec_nanos());
++        }
++        assert_eq!(
++            extended_statx(-1, 0, 0xfff).unwrap_err().raw_os_error(),
++            Some(libc::EBADF)
++        );
++        assert_eq!(
++            extended_statx(file.as_raw_fd(), libc::AT_SYMLINK_FOLLOW as u32, 0xfff)
++                .unwrap_err()
++                .raw_os_error(),
++            Some(libc::EINVAL)
++        );
++    }
++}
+--- a/src/passthrough/read_only.rs
++++ b/src/passthrough/read_only.rs
+@@ -185,6 +185,8 @@
+             inode: Self::Inode,
+             handle: Option<Self::Handle>,
+         ) -> io::Result<(fuse::Attr, Duration)>;
++        fn statx(&self,ctx:Context,inode:Self::Inode,handle:Option<Self::Handle>,
++            flags:u32,mask:u32) -> io::Result<(fuse::Statx,Duration)>;
+         fn readlink(&self, ctx: Context, inode: Self::Inode) -> io::Result<Vec<u8>>;
+         fn read<W: ZeroCopyWriter>(
+             &self,
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -513,6 +513,7 @@
+     println!("    \"migrate-precopy\",");
+     println!("    \"posix-acl-negotiation-mode\",");
+     println!("    \"security-label-negotiation-mode\",");
++    println!("    \"statx\", ");
+     println!("    \"separate-options\"");
+     println!("  ]");
+     println!("}}");
