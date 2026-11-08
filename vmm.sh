@@ -27,6 +27,7 @@ No command: show this help.
   stop ID  Stop a VM; persistent roots/volumes are retained, temporary root disks deleted.
   reboot ID  Restart a managed service VM, or recreate an ordinary VM and restore its ports.
   service <install|setup|start|up|stop|destroy|status> ...  Manage generic guest services.
+  environment <check|up|apply> FILE.yaml  Provision a user environment from one private YAML.
   check    Check installed paths, config, KVM, cgroup v2 and namespace support.
   smoke    Run real KVM block-volume and virtio-fs acceptance with disposable fixtures.
   package  Create zstd kernel/rootfs archives and refresh SHA256SUMS.
@@ -43,7 +44,7 @@ Environment:
   IMAGE_SIZE_MIB     New Debian root disk size (default: 2048).
   GUEST_FLAVOR       harness (pinned Codex/Claude Code/DSH) or base (no Node/tools).
   NPM_REGISTRY       Registry used in the build stage; npm is absent at runtime.
-  NODE_IMAGE         Pinned Node build image (default: node:24.22.1-trixie-slim).
+  NODE_IMAGE         Pinned Node build image (default: node:26.13.0-trixie-slim).
   SSH_PUBLIC_KEY     Guest authorized public key (auto: ~/.ssh/mindos-firecracker.pub).
   FC_EGRESS_INTERFACE, FC_DNS_SERVERS  Optional NAT interface/public DNS overrides.
   REBUILD_IMAGE=1    With --os, force rebuilding the Debian image.
@@ -422,7 +423,7 @@ case ${1:-help} in
     network) validate_build_options "${@:2}"; init; require_os_assets "${@:2}"; network_setup "${@:2}" ;;
     shared-root) validate_build_options "${@:2}"; init; require_os_assets "${@:2}"; shared_root_setup "${@:2}" ;;
     ssh) init; ssh_vm "${@:2}" ;;
-    service|list) init; host_cli "$1" "${@:2}" ;;
+    environment|service|list) init; host_cli "$1" "${@:2}" ;;
     ip) init; host_cli network address "${2:?VM_ID required}" | cut -d ' ' -f 1 ;;
     start|stop|reboot) init; host_cli "$1" "${2:?VM_ID required}" "${@:3}" ;;
     publish|unpublish|ports) init; host_cli "$1" "${@:2}" ;;

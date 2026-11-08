@@ -44,13 +44,39 @@ cd ~/share/prj/x1/tools/fc-server
 ./vmm.sh stop demo  # 删除 VM；临时根盘修改随之丢弃
 ```
 
-`build --os` 的完整构建包含服务 release、fork 指定 toolchain 的 musl Firecracker/jailer、Rust virtiofsd、内建 virtio-fs/vsock/ext4/i8042 的 Linux 6.18.54 内核，以及默认 **2048 MiB（2 GiB）** 的 Debian 13 根盘。默认 `GUEST_FLAVOR=harness` 预装 Codex、Claude Code、DSH；`GUEST_FLAVOR=base` 只构建精简基础系统。内核源码由 kernel.org 下载，校验脚本固定的 SHA-256；制品哈希写入 `build/SHA256SUMS`。virtiofsd 从校验 SHA-256 的固定 1.14.0 源码构建，并应用 `patches/virtiofsd-statx.patch`，支持 FUSE 7.39 `STATX`，透传宿主实际提供的创建时间；包含 UID/GID 映射、文件句柄校验和只读模式转发。构建按补丁/脚本及二进制摘要复用缓存，不自动选用未修补的系统 daemon。内核配置以 fork 自带的 6.18 microVM 配置为基础，显式启用直通与正常关闭所需选项，并关闭 `CONFIG_FUSE_DAX`：该分支没有 DAX shared-memory region，开启时 guest virtio-fs 探测会失败。
+### 更新受管服务：以 cell-x1 为例
+
+`cell-x1` 由 `firecracker-workload@cell-x1.service` 监督。更新它的服务包时，停止这个实例的监督服务即可，不需要停止全局的 `firecracker-server.service`，也不会停止其他 VM。
+
+```bash
+./vmm.sh service status cell-x1
+./vmm.sh service stop cell-x1
+./vmm.sh service install \
+  /etc/mindos-firecracker/service-sources/cells-x1/service.toml \
+  --identity /home/li/.ssh/mindos-firecracker
+./vmm.sh service start cell-x1
+./vmm.sh service status cell-x1
+```
+
+其中 `cell-x1` 是 VM ID，`cells-x1` 是该示例的服务包 ID。`service stop` 会停止并禁用该实例的监督 unit；如果需要开机自动恢复，将上面的启动命令替换为 `./vmm.sh service up cell-x1 cells-x1 --enable`。只需重启已安装的受管服务时，使用 `./vmm.sh reboot cell-x1`。
+
+不要把普通 `./vmm.sh stop cell-x1` / `./vmm.sh start cell-x1` 用作受管服务的更新流程：前者仅停止 VM，仍在运行的监督服务会恢复它；后者使用默认 `debian13` profile 及命令行目录创建实例，与服务包的 profile、挂载或代理配置不同，会返回 `API_ID_CONFLICT`。先查看 `service status`，无需删除持久根盘来解除此类冲突。
+
+如果目的是把当前 `cell-x1` 的 Git/Node 升级到新镜像版本，请直接按后文[当前 cell-x1 的完整系统升级流程](#当前-cell-x1-的完整系统升级流程)操作；不要只重复上述服务包更新命令。
+
+Git 提交身份、GitHub 密钥和用户 rootfs 的初始化统一使用私有 YAML：`./vmm.sh environment check|up|apply FILE.yaml`。首次创建自动初始化，重启保留用户修改，显式 `apply` 才更新已有配置。示例见 [environment.yaml](examples/environment.yaml)，字段与生命周期见[用户环境](doc/services.md#用一个-yaml-管理用户环境)。
+
+`service install` 只安装服务包，不更新 Debian 系统包、Node 或镜像。`fd`（`fd-find`）、`rg`（`ripgrep`）、`vim` 等工具由 `guest/Dockerfile` 的 APT 安装步骤提供。镜像配方变化需通过 `./vmm.sh build --os` 构建、部署；已有持久根盘仍固定使用原基础镜像，采用新系统版本需要单独升级该 VM，或迁移到新根盘，停止再启动不会自动升级。详见[持久根盘与服务管理](doc/services.md)。
+
+`build --os` 的完整构建包含服务 release、fork 指定 toolchain 的 musl Firecracker/jailer、Rust virtiofsd、内建 virtio-fs/vsock/ext4/i8042 的 Linux 6.18.54 内核，以及默认 **2048 MiB（2 GiB）** 的 Debian testing 根盘。默认 `GUEST_FLAVOR=harness` 预装 Codex、Claude Code、DSH；`GUEST_FLAVOR=base` 只构建精简基础系统。内核源码由 kernel.org 下载，校验脚本固定的 SHA-256；制品哈希写入 `build/SHA256SUMS`。virtiofsd 从校验 SHA-256 的固定 1.14.0 源码构建，并应用 `patches/virtiofsd-statx.patch`，支持 FUSE 7.39 `STATX`，透传宿主实际提供的创建时间；包含 UID/GID 映射、文件句柄校验和只读模式转发。构建按补丁/脚本及二进制摘要复用缓存，不自动选用未修补的系统 daemon。内核配置以 fork 自带的 6.18 microVM 配置为基础，显式启用直通与正常关闭所需选项，并关闭 `CONFIG_FUSE_DAX`：该分支没有 DAX shared-memory region，开启时 guest virtio-fs 探测会失败。
+
+运行镜像基于 `debian:testing-slim`，从 testing 安装 Git 等系统包，以支持协调工作区使用的相对 worktree。现有 `debian13` profile、脚本和制品文件名保留为兼容标识，不表示镜像仍使用 Debian 13 软件源。Node 构建阶段继续使用已锁定的版本镜像，最终运行系统为 testing。
 
 运行镜像保留 Bash、Git、Python、bubblewrap、systemd、udev、网络基础组件及非 root vsock 服务。默认还安装 less、Vim、fd（Debian 的 fd-find，提供 fd 命令）、ripgrep、procps（top/ps/free）、iproute2（ip/ss）、curl、jq、file、tree、lsof、ping、dig、unzip、rsync、psmisc（pstree/killall）。基础版和 harness 版都包含这些工具，导出镜像前以 agent 用户检查命令是否存在。man/info、语言翻译和普通文档在构建时裁剪，保留版权文件与 C.UTF-8；禁用 APT 更新、备份、fstrim 等定时任务、getty 及等待联网服务，journald 使用有界内存日志。systemd 继续负责服务隔离、挂载和正常关机。
 
 工具清单变更在下一次 `./vmm.sh build --os` 构建镜像时生效；普通 `build` 和 `install-server` 不更新 OS。已创建的持久根盘继续固定使用原基础镜像，不能通过替换全局 lower 给旧 upper 升级；应单独维护该 VM，或新建根盘后迁移数据。
 
-运行版通过 Docker BuildKit 多阶段构建使用 Node 24.22.1，最终只复制 Node 和生产依赖，不保留 npm、开发头文件或编译工具；npm 缓存保存在 BuildKit cache mount 中，不进入运行镜像。`guest/runtimes/package.json` 固定 Codex 0.164.0、Claude Code 2.1.209、DSH 0.2.0-rc.2，`package-lock.json` 锁定依赖树。DSH 需要新版 Node，不能直接使用 Debian 13 的 Node 20。升级工具时修改这两个文件并重新构建，禁止在每次启动时下载工具。
+运行版通过 Docker BuildKit 多阶段构建使用 Node 26.13.0，最终只复制 Node 和生产依赖，不保留 npm、开发头文件或编译工具；npm 缓存保存在 BuildKit cache mount 中，不进入运行镜像。`guest/runtimes/package.json` 固定 Codex 0.164.0、Claude Code 2.1.209、DSH 0.2.0-rc.2，`package-lock.json` 锁定依赖树。DSH 需要新版 Node，不能直接使用 Debian 13 的 Node 20。升级工具时修改这两个文件并重新构建，禁止在每次启动时下载工具。
 
 ```bash
 # 可选：源码位置、已有内核/daemon、APT 镜像及并行度。
@@ -107,7 +133,129 @@ upper_size_mib = 2048
 
 ## 统一更新基础镜像
 
-修改基础镜像可以让之后创建的所有 VM 使用新的系统文件、软件和默认配置。某个运行中 VM 内的根盘修改只写入它自己的 upper，不会更新其他 VM 或基础镜像。当前更新方式是构建并部署新镜像，运行中的 VM 不支持根盘热更新。
+修改基础镜像可以让之后创建新根盘的 VM 使用新的系统文件、软件和默认配置。已有持久根盘的 VM 即使停止后重新启动，仍使用原根盘和原基础镜像。某个运行中 VM 内的根盘修改只写入它自己的 upper，不会更新其他 VM 或基础镜像。当前不支持根盘热更新。
+
+更新有三层，必须分别核对：
+
+| 操作 | 更新位置 | 会升级已有 cell-x1 的 Git/Node 吗？ |
+| --- | --- | --- |
+| `./vmm.sh build --os` | `build/images/` 中的构建制品 | 不会，还没有部署 |
+| `./vmm.sh install` | `/var/lib/mindos-images/` 中的全局制品 | 不会，已有持久根盘保留原版本 |
+| 升级旧 VM 内的软件，或新建根盘并迁移数据 | 当前 VM 的实际运行系统 | 会，以 guest 内检查结果为准 |
+
+`./vmm.sh service install ...` 更新的是应用服务包，不属于上述系统镜像升级流程。`service start`、`service up`、`reboot` 都不会清空已有持久根盘或自动将其转换到新基础镜像。
+
+### 部署已构建的新镜像
+
+以下操作涉及全局管理服务，需要维护窗口。先停止所有受管 VM 的监督服务，避免监督进程在管理服务重启后恢复旧实例；普通 VM 也应停止。以仅运行 `cell-x1` 为例：
+
+```bash
+./vmm.sh service stop cell-x1
+./vmm.sh list --all
+sudo /usr/local/bin/firecracker-server network idle
+sudo systemctl stop firecracker-server.service
+./vmm.sh install
+sudo systemctl start firecracker-server.service
+```
+
+`network idle` 必须成功；有其他活动 VM 时先处理它们。`install` 使用当前 `BUILD_DIR` 的已有制品，不重新构建；若尚未构建新镜像，先执行 `REBUILD_IMAGE=1 ./vmm.sh build --os`。自定义 `BUILD_DIR` 时各步必须保持一致。只更新应用服务包时无需停止全局管理服务，使用前面的 `cell-x1` 服务包更新示例。
+
+### 当前 cell-x1 的完整系统升级流程
+
+适用于：新 testing 镜像已构建，但 `cell-x1` 仍显示 Git 2.47.x / Node 24，且需要保留 VM ID、配置和会话。下列命令在宿主的 `tools/fc-server` 目录、同一终端中按顺序执行；任何一步失败都停止，不进入删除根盘步骤。先结束当前 Cell 中正在执行的业务任务。示例假定只有 `cell-x1` 在运行；有其他 VM 时也必须先停止其监督服务及 VM。
+
+**1. 确认新镜像已构建，创建私有备份目录。** 当前默认 Node 应为 `v26.13.0`；若没有该构建报告或版本仍旧，先运行 `REBUILD_IMAGE=1 ./vmm.sh build --os`。自定义 `BUILD_DIR` 时，下列路径替换为相同构建目录。
+
+```bash
+python3 -c 'import json; p=json.load(open("build/images/debian13.ext4.json")); v=p["probe"]["runtimes"]["node"]["version"]; print(v); assert v == "v26.13.0", "Build the new image first"'
+umask 077
+cell_upgrade_backup="$HOME/.local/state/fc-server-upgrades/cell-x1-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -m 700 -p "$cell_upgrade_backup"
+printf 'Backup directory: %s\n' "$cell_upgrade_backup"
+```
+
+记录该目录的实际路径，后续步骤和回滚都要用到。备份含凭据和会话，不要放进源码仓库或公开共享目录。
+
+**2. 停止监督服务，备份并校验旧持久根盘和宿主配置。** `root` 备份包含旧 upper、旧基础镜像、内核、initrd 和 manifest，而不是只复制一个 `rootfs.ext4`。
+
+```bash
+./vmm.sh service stop cell-x1
+sudo cp -a --reflink=auto /var/lib/mindos-firecracker/roots/cell-x1 "$cell_upgrade_backup/root"
+sudo cp -a /etc/mindos-firecracker "$cell_upgrade_backup/host-config"
+sudo cp -a /var/lib/mindos-firecracker/services/packages/cells-x1.json "$cell_upgrade_backup/service-package.json"
+sudo cp -a /var/lib/mindos-firecracker/services/vms/cell-x1.json "$cell_upgrade_backup/service-binding.json"
+sudo diff -qr /var/lib/mindos-firecracker/roots/cell-x1 "$cell_upgrade_backup/root"
+```
+
+`diff` 必须成功且没有差异。备份占用取决于磁盘和 reflink 支持，先保证备份盘空间充足。
+
+**3. 导出可迁移的 agent 用户数据，再停止旧 VM。** `service setup` 只准备 VM 和服务文件，不启动 cells 应用；此时监督服务仍停止。导出整个 agent home，保留 Codex/Claude 配置、会话及放在 home 下的 cells 数据。
+
+```bash
+./vmm.sh service setup cell-x1 cells-x1
+./vmm.sh ssh cell-x1 'tar -C /home/agent -czf - .' > "$cell_upgrade_backup/agent-home.tar.gz"
+tar -tzf "$cell_upgrade_backup/agent-home.tar.gz" > /dev/null
+./vmm.sh service stop cell-x1
+```
+
+上一步的整盘备份同时保留了 home 以外的旧数据。若曾手工在 `/etc`、其他用户目录或其他根盘路径保存业务配置，应在后续迁移中逐项恢复；不要把旧 `/usr`、`/opt`、整个 `/etc` 或旧 upper 覆盖到新系统。直通目录和额外挂载卷保留原内容，不需要复制进新根盘。
+
+**4. 部署新镜像。** 这一段才更新宿主全局镜像，需要停止全局管理服务；仅更新应用服务包时不需要这一段。
+
+```bash
+./vmm.sh list --all
+sudo /usr/local/bin/firecracker-server network idle
+sudo systemctl stop firecracker-server.service
+./vmm.sh install
+sudo systemctl start firecracker-server.service
+```
+
+`network idle` 必须成功。此时 `cell-x1` 的监督服务应仍停止，不要提前 `service start cell-x1`，否则会再次启动旧根盘。
+
+**5. 在备份完整且部署成功后，显式替换 cell-x1 的根盘。** `service destroy` 会删除旧根盘及 VM 到服务包的绑定；这是本流程中会删除旧系统的步骤。服务包、额外挂载卷、直通目录及上面的备份不会被删除。
+
+```bash
+test -s "$cell_upgrade_backup/agent-home.tar.gz"
+tar -tzf "$cell_upgrade_backup/agent-home.tar.gz" > /dev/null
+sudo test -f "$cell_upgrade_backup/root/manifest.json"
+# Destructive: run only after the backup and deployment checks above succeeded.
+./vmm.sh service destroy cell-x1
+./vmm.sh service setup cell-x1 cells-x1
+```
+
+**6. 恢复用户数据并验证新系统。** 只恢复用户 home，保留新镜像的系统文件和运行时。
+
+```bash
+./vmm.sh ssh cell-x1 'tar -C /home/agent -xzf -' < "$cell_upgrade_backup/agent-home.tar.gz"
+./vmm.sh ssh cell-x1 'cat /etc/os-release; command -v git git-lfs node fd rg vim; git --version; git lfs version; node --version'
+./vmm.sh ssh cell-x1 'git -C /home/li/share/prj/x1 rev-parse --verify "HEAD^{commit}"'
+```
+
+项目路径按实际直通目录替换。Node 应为 `v26.13.0`，Git 应支持相对 worktree（至少 2.48），`fd`、`rg`、`vim` 应存在，项目 HEAD 应正常读出。若仍选中旧版 Node/Git，检查恢复的用户配置是否在 PATH 中指定了其他版本。SSH 欢迎行中的 Linux 内核版本不能证明用户态软件已升级。
+
+**7. 启动 cells 服务，确认就绪，再恢复协调任务。** 原有服务包已安装，不需要再次 `service install`；只有修改了 `service.toml` 或包内文件才需要在监督服务停止时重新安装。
+
+```bash
+./vmm.sh service start cell-x1
+./vmm.sh service status cell-x1
+```
+
+状态应为 `ready`。需要开机自动恢复时，将启动命令替换为 `./vmm.sh service up cell-x1 cells-x1 --enable`。确认服务、原配置和会话正常后，在 NestOS 对原协调任务点击“重试规划”；校验通过后继续原任务，单纯进入 Session 不会触发恢复。保留备份直到业务与会话验证完成。
+
+**回滚到旧系统。** 新根盘出现问题且需要恢复旧系统时，先保留新根盘中新增的必要数据，然后停止并删除新根盘，从上述完整备份恢复旧根盘、服务包和绑定，再启动。此操作恢复的是旧软件版本，不会解决原来的 Git 兼容问题。
+
+```bash
+./vmm.sh service stop cell-x1
+# Destructive: remove the failed replacement root, not the backup.
+./vmm.sh service destroy cell-x1
+sudo cp -a --reflink=auto "$cell_upgrade_backup/root" /var/lib/mindos-firecracker/roots/cell-x1
+sudo cp -a "$cell_upgrade_backup/service-package.json" /var/lib/mindos-firecracker/services/packages/cells-x1.json
+sudo cp -a "$cell_upgrade_backup/service-binding.json" /var/lib/mindos-firecracker/services/vms/cell-x1.json
+./vmm.sh service start cell-x1
+./vmm.sh service status cell-x1
+```
+
+### 修改镜像内容
 
 需要统一分发普通文件时，可在源码中新增 `guest/rootfs/`，按 guest 内的绝对路径组织文件，例如：
 
@@ -135,7 +283,7 @@ sudo /usr/local/bin/firecracker-server network idle
 
 `shared-root --os` 会根据 guest 文件变化自动重建根盘，部署基础镜像和 initramfs，再启动管理服务；Firecracker 和内核复用已有编译缓存。自定义过 `BUILD_DIR`、`GUEST_FLAVOR`、镜像容量、APT/npm 镜像源或 SSH 公钥时，更新时应继续传入相应环境变量。只想刷新系统包而配方未变时，可用 `REBUILD_IMAGE=1 ./vmm.sh shared-root --os` 强制重建。
 
-部署器通过替换文件发布新镜像，不会原地改写旧 inode。新建 VM 使用新版本；已经运行的 VM 不会因替换镜像路径而切换版本，且当前部署命令要求先停止所有 VM。停止会清理临时根盘 upper，持久卷和宿主直通目录按下文规则保留。基础镜像本身以 `0444` 发布，禁止在 VM 使用它期间，通过宿主挂载、debugfs 或直接写文件的方式修改这个 ext4，以免破坏 guest 文件系统和 OverlayFS 状态。
+部署器通过替换文件发布新镜像，不会原地改写旧 inode。新建根盘使用新版本；已存在的持久根盘固定原 `base.ext4`、内核和 initrd，不会因替换镜像路径或重启而切换版本。当前部署命令要求先停止所有 VM。停止只清理临时根盘 upper，持久根盘、持久卷和宿主直通目录按下文规则保留。基础镜像本身以 `0444` 发布，禁止在 VM 使用它期间，通过宿主挂载、debugfs 或直接写文件的方式修改这个 ext4，以免破坏 guest 文件系统和 OverlayFS 状态。
 
 ## SSH 与网络
 

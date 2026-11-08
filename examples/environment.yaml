@@ -1,0 +1,21 @@
+# Keep the actual YAML and credentials in a private directory outside the repository.
+version: 1
+vm:
+  id: cell-x1
+  profile: services
+  proxy: clash
+rootfs:
+  persistent: true
+  user: agent
+service:
+  manifest: /etc/mindos-firecracker/service-sources/cells-x1/service.toml
+  identity_file: /home/li/.ssh/mindos-firecracker
+git:
+  user:
+    name: Your Name
+    email: you@example.com
+  lfs: true
+  github:
+    private_key_file: /home/li/.ssh/git_e259
+    known_hosts_file: /home/li/.ssh/known_hosts
+    https_to_ssh: true

@@ -72,7 +72,7 @@ pub fn atomic(path: &Path, data: &[u8], mode: u32) -> Result<()> {
     result
 }
 
-fn regular_exists(path: &Path) -> Result<bool> {
+pub fn regular_exists(path: &Path) -> Result<bool> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) => {
             ensure!(

@@ -51,6 +51,8 @@ pub struct Service {
     pub startup_timeout_secs: u64,
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "_proxy_environment")]
     pub proxy_environment: Option<BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_environment: Option<super::environment::UserEnvironment>,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -232,6 +234,7 @@ pub fn definition(path: &Path) -> Result<Service> {
         ready_port: m.ready_port,
         startup_timeout_secs: m.startup_timeout_secs,
         proxy_environment: None,
+        user_environment: None,
     };
     validate(&service)?;
     Ok(service)
@@ -259,7 +262,6 @@ pub fn read(host: &Host, id: &str) -> Result<Package> {
 }
 
 pub fn install(host: &Host, path: &Path, identity: &Path) -> Result<()> {
-    let started = std::time::Instant::now();
     let definition = definition(&path.canonicalize()?)?;
     resources(host, &definition)?;
     ensure!(
@@ -267,6 +269,13 @@ pub fn install(host: &Host, path: &Path, identity: &Path) -> Result<()> {
         "INVALID_SSH_IDENTITY"
     );
     let value = Package { definition, identity: std::fs::read_to_string(identity)? };
+    install_value(host, value)
+}
+
+pub fn install_value(host: &Host, value: Package) -> Result<()> {
+    let started = std::time::Instant::now();
+    validate(&value.definition)?;
+    resources(host, &value.definition)?;
     let root = host.services();
     let _guard =
         common::lock(&root.join("locks").join(format!("package.{}", value.definition.id)), false)?;

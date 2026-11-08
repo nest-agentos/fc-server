@@ -21,6 +21,7 @@ fn main() -> Result<()> {
         matches!(
             s.as_str(),
             "service"
+                | "environment"
                 | "list"
                 | "network"
                 | "start"

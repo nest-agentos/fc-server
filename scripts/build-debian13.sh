@@ -41,7 +41,7 @@ python3 "$script_dir/image-info.py" ssh-key > "$work/context/ssh-authorized-keys
     --build-arg "DEBIAN_MIRROR=${DEBIAN_MIRROR:-http://deb.debian.org/debian}" \
     --build-arg "DEBIAN_SECURITY_MIRROR=${DEBIAN_SECURITY_MIRROR:-http://deb.debian.org/debian-security}" \
     --build-arg "NPM_REGISTRY=${NPM_REGISTRY:-https://registry.npmjs.org}" \
-    --build-arg "NODE_IMAGE=${NODE_IMAGE:-node:24.22.1-trixie-slim}" \
+    --build-arg "NODE_IMAGE=${NODE_IMAGE:-node:26.13.0-trixie-slim}" \
     "$work/context"
 image_id=$(cat "$work/image-id")
 # Test as the guest user without network or credentials, before exporting a clean container.

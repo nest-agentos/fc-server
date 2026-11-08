@@ -55,7 +55,7 @@ fn binding(host: &Host, vm: &str) -> std::path::PathBuf {
     host.services().join("vms").join(format!("{vm}.json"))
 }
 
-fn initialize(host: &Host) -> Result<()> {
+pub fn initialize(host: &Host) -> Result<()> {
     common::private_dir(&host.services())?;
     for name in ["packages", "vms", "runtime", "locks"] {
         common::private_dir(&host.services().join(name))?;
@@ -155,7 +155,15 @@ fn publish(host: &Host, vm: &str, package: &Package) -> Result<()> {
     crate::systemd::ready()
 }
 
-fn guest_error(value: &Value) -> &'static str {
+fn guest_error(value: &Value) -> &str {
+    if let Some(code) = value["code"].as_str() {
+        if code.starts_with("ENVIRONMENT_")
+            && code.len() <= 100
+            && code.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
+        {
+            return code;
+        }
+    }
     match value["category"].as_str().unwrap_or("") {
         "PROXY_UNREACHABLE" => "PROXY_UNREACHABLE",
         "UNTRUSTED_GUEST_FILE" => "UNTRUSTED_GUEST_FILE",
@@ -168,6 +176,7 @@ fn guest_error(value: &Value) -> &'static str {
         "SERVICE_BUSY" => "SERVICE_BUSY",
         "INVALID_PAYLOAD" => "INVALID_PAYLOAD",
         "GUEST_IO" => "GUEST_IO",
+        "USER_ENVIRONMENT_FAILED" => "USER_ENVIRONMENT_FAILED",
         _ => "INVALID_GUEST_ERROR",
     }
 }
@@ -232,7 +241,7 @@ fn watch(
                             "files_prepared",
                             started,
                             json!({"vm":vm,"written":message["files_written"],
-                            "preserved":message["files_preserved"],"guest_elapsed_ms":message["elapsed_ms"]}),
+                            "preserved":message["files_preserved"],"environment":message["environment"],"guest_elapsed_ms":message["elapsed_ms"]}),
                         );
                     }
                     if event(host, vm, value, action, &message, &mut ready)? {

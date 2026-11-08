@@ -1,5 +1,6 @@
 //! Native host administration. Build-time image tooling is deliberately separate.
 pub mod common;
+pub mod environment;
 pub mod inventory;
 pub mod network;
 pub mod package;
@@ -29,6 +30,7 @@ pub fn dispatch(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("list") => inventory::run(&host, &args[1..]),
         Some("service") => service::dispatch(&host, &args[1..]),
+        Some("environment") => environment::dispatch(&host, &args[1..]),
         Some("network") => network::dispatch(&host, &args[1..]),
         Some("reboot") => reboot::run(&host, &args[1..]),
         Some("start" | "stop" | "publish" | "unpublish" | "ports") => {

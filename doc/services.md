@@ -97,6 +97,64 @@ curl http://127.0.0.1:18080
 
 安装将文件与 SSH 私钥快照保存到宿主 `/var/lib/mindos-firecracker/services/packages/`，权限由私有根目录和 0600 文件约束；后续启动不依赖原始服务包或用户的 SSH 私钥路径。更新宿主服务包不会自动覆盖 guest 已有文件；需要宿主管理某个文件时，在它的 `[[files]]` 中显式声明 `overwrite = true` 后重新安装服务包。同 ID 同内容重复安装幂等；更新包要求所有绑定 VM 的监督服务均停止。profile、挂载等存储变更仍受持久根盘兼容检查限制。服务包和业务凭据不应提交到仓库。
 
+Git 开发环境还需要在 guest 的 agent 用户下配置 `git config --global user.name` 和 `git config --global user.email`，并执行 `git lfs install --skip-repo`。镜像提供 `git`、`git-lfs` 和 `openssh-client`；个人提交身份、出站 SSH 私钥及可信 `known_hosts` 通过私有部署配置提供，不写入 Dockerfile 或源码。出站 Git 密钥与登录 VM 的管理密钥用途独立；只投递实际需要的密钥和对应 SSH Host 配置，不复制宿主全部 SSH 配置。`~/.ssh` 使用 0700，私钥与配置使用 0600。HTTPS remote 使用 SSH 认证时，可在 guest 用户配置中设置 `git config --global url.git@github.com:.insteadOf https://github.com/`，无需改动共享仓库 remote。持久根盘保留 agent home，重建根盘时需按升级流程备份、恢复这些配置；用 `ssh -T git@github.com` 和 `git ls-remote origin HEAD` 分别验证身份和仓库读取权限，不能仅凭密钥文件存在判断认证成功。
+
+### 用一个 YAML 管理用户环境
+
+用户环境统一使用 [environment.yaml](../examples/environment.yaml)，通过 `vmm.sh environment check|up|apply FILE.yaml` 管理。配置引用既有服务 manifest、管理 SSH 身份及 Git 私钥文件，不包含私钥正文；相对路径以 YAML 所在目录解析，绝对路径保持原义，不展开 `~` 或环境变量。YAML 及凭据放在仓库外的宿主私有目录。
+
+```yaml
+version: 1
+vm:
+  id: cell-x1
+  profile: services
+  proxy: clash
+rootfs:
+  persistent: true
+  user: agent
+service:
+  manifest: /etc/mindos-firecracker/service-sources/cells-x1/service.toml
+  identity_file: /home/li/.ssh/mindos-firecracker
+git:
+  user:
+    name: Rain Li
+    email: lizlok@gmail.com
+  lfs: true
+  github:
+    private_key_file: /home/li/.ssh/git_e259
+    known_hosts_file: /home/li/.ssh/known_hosts
+    https_to_ssh: true
+```
+
+profile 继续控制基础镜像与硬件、网络、授权挂载，`rootfs.persistent` 必须与 profile 一致，不会暗中改写宿主全局 profile 或替换旧 rootfs。当前只支持既有 `agent` 用户。服务启动命令、端口、挂载仍由应用自己的 manifest 定义；用户环境初始化由通用 guest agent 执行，不需要修改 Cells 启动脚本。
+
+```bash
+./vmm.sh environment check /path/to/environment.yaml
+./vmm.sh environment up /path/to/environment.yaml
+# Explicitly update an existing VM; stops and restarts this managed service.
+./vmm.sh environment apply /path/to/environment.yaml
+```
+
+`check` 校验 YAML、文件可读性、密钥权限、GitHub 可信主机、profile 与服务授权，不启动或停止 VM，也不执行网络认证。`up` 安装私有快照并启动/启用服务，首次初始化 Git；已存在的初始化标记会保留 guest 用户修改。已运行服务的配置有变化时拒绝更新，使用显式 `apply`。`apply` 在预检查通过后停止本 VM 的监督服务、更新快照、重新启动；生成一次性的 apply 标记，使本次明确更新生效，后续重启不会反复覆盖用户修改。更新失败会报出具体阶段，不会自动删除根盘或降低授权。
+
+多个 VM 可使用相同服务包与相同环境快照；为避免修改其他 VM 的用户配置，`apply` 拒绝更新绑定多个 VM 的共享服务包，应为不同用户/权限创建独立服务包 ID。新 VM 可复用 YAML 并修改 `vm.id`；更换用户时同时选择独立服务包和密钥。
+
+Git 文件统一保存在 guest 的 `~/.config/firecracker/git/`：`private-key`、`known_hosts`、`ssh_config`、`initialized.json`。目录为 0700，文件为 0600。`~/.gitconfig` 保存提交身份、SSH 配置路径、GitHub HTTPS 映射和可选 LFS 配置，不覆盖其他 Git 配置。私钥源文件名任意，只要求权限不允许组或其他用户读取；只选取可信主机文件中 GitHub 的条目。首次启动要求镜像已有 `/usr/bin/ssh`、Git 和需要时的 Git LFS，缺失会明确拒绝初始化，不自动联网安装软件。`lfs: false` 表示不安装 LFS 用户配置。
+
+验证配置与远程权限：
+
+```bash
+./vmm.sh ssh cell-x1 'git config --global user.name; git config --global user.email'
+./vmm.sh ssh cell-x1 'ssh -F ~/.config/firecracker/git/ssh_config -T git@github.com'
+./vmm.sh ssh cell-x1 'git -C /home/li/share/prj/x1 ls-remote origin HEAD'
+```
+
+服务就绪只证明本地初始化与应用启动成功，不代表 GitHub 网络认证成功。管理日志只记录阶段、结果、耗时和关联 operation ID，不输出私钥、完整 YAML、应用环境变量或用户正文。
+
+2026-11-08 实机验收：重新构建包含 Git 2.53.0、Git LFS 3.8.1、OpenSSH 10.6p1 和 Node 26.13.0 的 harness rootfs；镜像 ID 为 `sha256:1de9b2525fa7b91ccb635ea904c31998c9ca945b42cd52c0a3876c819948e80e`。`cell-x1` 在旧持久根盘备份与 agent home 归档校验后创建了新根盘，恢复用户配置和会话文件，再通过私有 YAML 显式应用 Git 环境。新根盘的 lower 与新部署镜像为同一 inode，排除复用旧根盘；标准 SSH 客户端由系统包提供，旧临时客户端与旧出站私钥已清理。相对 worktree 创建/移除、Git LFS、GitHub SSH 认证和仓库 HEAD 读取通过；重启后 Git 配置及初始化标记摘要一致，Cells 项目列表可读。重复 `up` 未重启已就绪 VM，rootfs/profile 不一致在停机前拒绝且失败日志准确。62 项 Rust 测试（串行运行，避免既有端口占用测试的并发竞争）、28 项构建脚本测试及文档检查通过；这些结果不代表完整浏览器页面性能验收。
+
+受管服务请使用 `./vmm.sh service stop VM_ID` 和 `./vmm.sh service start VM_ID`；重启使用 `./vmm.sh reboot VM_ID`。普通 `stop` 仅停止 VM，仍运行的监督服务会尝试恢复它；随后普通 `start` 使用默认 `debian13` profile 和命令行目录创建同名实例，可能与服务包的 profile、挂载或代理配置冲突并返回 `API_ID_CONFLICT`。遇到此错误先查看 `./vmm.sh service status VM_ID`，不要删除持久根盘来解除冲突。
+
 宿主的 `firecracker-workload@VM_ID.service` 监督 SSH，guest 辅助进程监督应用进程组。SSH 控制通道 EOF 会终止应用；失败会清理当前 VM 并由 systemd 重试。就绪事件通过 `sd_notify` 上报，端口全部发布成功后才算启动完成。服务退出、SSH 失败、就绪超时和端口冲突均记录分类日志，原始应用输出不写入管理日志。
 
 管理服务使用 systemd `Type=notify`，完成初始化并绑定 API 监听端口后才发送就绪通知；`systemctl start firecracker-server` 返回后可立即创建或查询 VM。

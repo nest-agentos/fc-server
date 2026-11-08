@@ -1,4 +1,5 @@
 //! Unprivileged, static guest supervisor uploaded over SSH; no interpreter required.
+mod environment;
 mod files;
 mod supervisor;
 
@@ -57,8 +58,16 @@ pub fn run() -> Result<()> {
     let _guard = files::lock(&root)?;
     let started = std::time::Instant::now();
     let (written, preserved) = files::prepare(&payload.definition, &root)?;
+    let environment = if let Some(value) = &payload.definition.user_environment {
+        let home = std::path::PathBuf::from(
+            std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("HOME_REQUIRED"))?,
+        );
+        Some(environment::prepare(&home, value)?)
+    } else {
+        None
+    };
     emit(serde_json::json!({"event":"prepared","files_written":written,
-        "files_preserved":preserved,"elapsed_ms":started.elapsed().as_millis()}))?;
+        "files_preserved":preserved,"environment":environment,"elapsed_ms":started.elapsed().as_millis()}))?;
     if payload.action == "run" {
         supervisor::execute(&payload.definition, &root, input.as_raw_fd())?;
     }
@@ -75,7 +84,11 @@ pub fn category(error: &anyhow::Error) -> &'static str {
             };
         }
     }
-    match error.to_string().as_str() {
+    let message = error.to_string();
+    if message.starts_with("ENVIRONMENT_") {
+        return "USER_ENVIRONMENT_FAILED";
+    }
+    match message.as_str() {
         "PROXY_UNREACHABLE" => "PROXY_UNREACHABLE",
         "UNTRUSTED_GUEST_FILE" => "UNTRUSTED_GUEST_FILE",
         "SERVICE_BUSY" => "SERVICE_BUSY",
