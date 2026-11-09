@@ -48,6 +48,18 @@ cd ~/share/prj/x1/tools/fc-server
 
 `cell-x1` 由 `firecracker-workload@cell-x1.service` 监督。更新它的服务包时，停止这个实例的监督服务即可，不需要停止全局的 `firecracker-server.service`，也不会停止其他 VM。
 
+推荐使用单命令更新，它会按服务源覆盖包内声明的文件，停止旧实例、安装并启动，同时保留持久根盘里的 Session 和项目登记数据：
+
+```bash
+./vmm.sh service update cell-x1 \
+  /etc/mindos-firecracker/service-sources/cells-x1/service.toml \
+  --identity /home/li/.ssh/mindos-firecracker --enable
+```
+
+`update` 在停止前快照 manifest、声明文件与管理 SSH 身份并检查服务绑定和持久根盘。它只替换 `files` 声明的文件，不镜像删除目录，不删除根盘；原始 manifest 不会被改写。默认恢复原有开机启用状态，`--enable` 显式启用。它拒绝更换 profile、目录/卷集合及临时根盘；资源环境迁移使用 `environment apply`。失败按 prepare/stop/install/start 阶段报告，不自动重复安装或删除数据。普通 `service install` 仍遵循每个文件的 `overwrite` 设置；`update` 对本次安装快照中的声明文件统一启用覆盖，因此不要把 Session 历史或数据库声明为包内文件。
+
+以下分步命令适用于需要分别控制停止、安装和启动的情况：
+
 ```bash
 ./vmm.sh service status cell-x1
 ./vmm.sh service stop cell-x1
