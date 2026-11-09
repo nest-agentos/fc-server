@@ -101,6 +101,7 @@ fn ensure_vm(host: &Host, vm: &str, package: &Package) -> Result<()> {
     let spec = crate::manager::CreateVm {
         id: vm.into(),
         profile: s.profile.clone(),
+        resources: s.resources.clone(),
         directories: s.directories.clone(),
         volumes: s.volumes.clone(),
         proxy: s.proxy.clone(),

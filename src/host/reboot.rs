@@ -55,6 +55,7 @@ fn recreate(
 ) -> Result<Value> {
     ensure!(machine["state"] == "vmm-running", "VM_NOT_RUNNING");
     let spec = json!({"id":machine["id"],"profile":machine["profile"],
+        "resources":machine.get("requestedResources").cloned().unwrap_or(json!({})),
         "directories":machine["directories"],"volumes":machine["volumes"],"proxy":machine["proxy"]});
     let spec: CreateVm = serde_json::from_value(spec).context("INVALID_VM_SNAPSHOT")?;
     common::id_check(&spec.id)?;
@@ -78,7 +79,7 @@ mod tests {
     use super::*;
     fn machine() -> Value {
         json!({"id":"demo","state":"vmm-running","profile":"custom","directories":["project"],
-            "volumes":["home"],"proxy":"clash","rootfsPersistent":true,
+            "volumes":["home"],"proxy":"clash","requestedResources":{"memory_mib":4096},"rootfsPersistent":true,
             "ports":[{"listen":"127.0.0.1","host_port":18787,"guest_port":8787,"protocol":"tcp"}]})
     }
     #[test]
@@ -97,6 +98,7 @@ mod tests {
         for key in ["profile", "directories", "volumes", "proxy"] {
             assert_eq!(spec[key], machine()[key]);
         }
+        assert_eq!(spec["resources"], machine()["requestedResources"]);
         assert_eq!(value["rootfsPersistent"], true);
     }
     #[test]

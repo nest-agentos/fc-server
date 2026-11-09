@@ -4,6 +4,14 @@
 
 OS 构建现需显式 `--os`：默认 `build` 只构建 release 程序制品并刷新校验清单，不构建或压缩 kernel/image。`setup`、`network`、`shared-root` 默认复用已有 OS 文件，缺失时在执行初始化副作用前提示传入 `--os`。新增 6 项构建选择回归，部署/构建测试共 24 项通过，验证默认构建保持已有 OS 文件内容和修改时间、无 OS 制品时可构建程序、显式 OS 构建阶段选择、初始化参数传递及未知参数拒绝。
 
+## 2026-11-08：实例 CPU/内存覆盖与 cell-x1 扩容
+
+- YAML `vm.resources`、服务 manifest `[resources]` 与创建 VM API 支持可选 `vcpus` / `memory_mib`，缺省字段继承 profile；旧授权默认不变，管理员通过 `max_vcpus` / `max_memory_mib` 显式提高上限。请求随服务包保存，启动器使用同一有效 profile 配置 Firecracker 和两类 cgroup；列表展示有效资源。
+- 69 项 Rust 测试、Clippy（all-targets，warnings 为错误）、fmt、文档检查通过；核心性能回归 9 个文件 57 项及预算规则 6 项通过，临时作用域已清理。这些结果不代表完整浏览器页面性能验收。
+- 宿主私有 `/etc/mindos-firecracker/environments/cell-x1.yaml` 已声明 `memory_mib: 4096`；`services` 默认保持 1024 MiB，上限显式设为 4096 MiB。停止监督服务与管理服务后仅更新运行程序，使用 `environment up` 保留 Git 初始化状态；镜像与根盘未重建。
+- 运行中的管理程序与新 release 二进制 SHA-256 一致。`cell-x1` 的管理状态为 2 vCPU / 4096 MiB、ready，guest `free -m` 总计 3938 MiB；VMM memory.max 为 6710886400 字节（含原共享根缓存额度），virtiofsd 为 4429185024 字节，两者 cpu.max 均为 `200000 100000`。根盘 inode 3839567、2 GiB 大小及 Git 配置摘要在扩容与再次 reboot 后一致，18787→8787/tcp、代理、enabled 状态保留。
+- 真实失败验证：未提高上限前 4096 MiB 的 check 被拒绝；提高上限后 8192 MiB 的 apply 在停机前以 `RESOURCE_MEMORY_NOT_AUTHORIZED` 拒绝，监督 runtime 记录不变。错误日志包含操作 ID、阶段、结果、分类和耗时，无凭据正文。临时 YAML 已移除，部署备份保留在宿主私有 `resource-upgrade-cell-x1-20261108` 目录。
+
 ## 2026-11-07：通用服务托管、持久根盘与 cell-x1
 
 后续补充顶层 `firecracker-server list [--all] [--json]` 和 `vmm.sh list`。已更新 release 二进制及已安装辅助脚本，在普通用户下直接执行成功，显示 `cell-x1` 为 `vmm-running / ready`、IP `10.203.0.2`、持久根盘及 `127.0.0.1:18787->8787/tcp`。列表只调用一次管理 API；本机单次快照耗时为 17–21 ms，不是前端页面性能验收。Python 服务回归现为 23 项，新增默认/全部列表、128 VM 单次 API、实例身份校验、无敏感信息输出和查询失败不得当作空列表的覆盖。Rust 26 项、部署 18 项、clippy/fmt 与语法检查通过；SSH 连接同时复测通过。

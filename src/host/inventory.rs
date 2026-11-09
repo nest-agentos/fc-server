@@ -118,7 +118,7 @@ fn row(
     Ok(
         json!({"id":id,"profile":profile,"service":service,"proxy":machine["proxy"],"state":machine["state"],"serviceState":state,
         "ip":address,"rootfsPersistent":machine.get("rootfsPersistent").cloned().unwrap_or(json!(host.config.profiles.get(profile).is_some_and(|p|p.rootfs_persistent))),
-        "ageSecs":machine["ageSecs"],"ports":machine.get("ports").cloned().unwrap_or(json!([]))}),
+        "resources":machine["resources"],"ageSecs":machine["ageSecs"],"ports":machine.get("ports").cloned().unwrap_or(json!([]))}),
     )
 }
 
@@ -172,6 +172,8 @@ pub fn table(values: &[Value], all: bool) -> String {
         "VM_STATE",
         "SERVICE_STATE",
         "IP",
+        "VCPUS",
+        "MEM_MIB",
         "ROOT",
         "PORTS",
     ]
@@ -187,6 +189,8 @@ pub fn table(values: &[Value], all: bool) -> String {
             text("state"),
             text("serviceState"),
             text("ip"),
+            v["resources"]["vcpus"].as_u64().map(|v| v.to_string()).unwrap_or("-".into()),
+            v["resources"]["memory_mib"].as_u64().map(|v| v.to_string()).unwrap_or("-".into()),
             if v["rootfsPersistent"] == true { "persistent" } else { "ephemeral" }.into(),
             ports(&v["ports"]),
         ]);

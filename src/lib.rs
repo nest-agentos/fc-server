@@ -13,6 +13,7 @@ pub mod proxy;
 pub mod publication;
 #[path = "resource-operations.rs"]
 pub mod resource_operations;
+pub mod resources;
 pub mod rootfs;
 pub mod supervisor;
 pub mod systemd;

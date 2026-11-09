@@ -44,6 +44,7 @@ fn spec() -> CreateVm {
     CreateVm {
         id: "retained".into(),
         profile: "test".into(),
+        resources: Default::default(),
         directories: vec![],
         volumes: vec![],
         proxy: None,
@@ -110,4 +111,31 @@ async fn shared_root_pins_lower_and_boot_assets_until_explicit_deletion() {
     std::fs::remove_dir_all(second).unwrap();
     rootfs::delete(&config, "retained").await.unwrap();
     assert!(!rootfs::directory(&config, "retained").exists());
+}
+
+#[tokio::test]
+async fn compute_resize_reuses_existing_root_and_legacy_manifest() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = configuration(temp.path());
+    let first = temp.path().join("first");
+    prepare(&config, &first).await.unwrap();
+    let inode = std::fs::metadata(first.join("rootfs.ext4")).unwrap().ino();
+    let mut resized = spec();
+    resized.resources.memory_mib = Some(4096);
+    let mut profile = config.profiles["test"].clone();
+    profile.max_memory_mib = Some(4096);
+    let profile = resized.resources.resolve(&profile).unwrap();
+    let second = temp.path().join("resized");
+    std::fs::create_dir(&second).unwrap();
+    rootfs::prepare(
+        &config,
+        &resized,
+        &profile,
+        &second,
+        unsafe { libc::geteuid() },
+        Instant::now() + Duration::from_secs(30),
+    )
+    .await
+    .unwrap();
+    assert_eq!(std::fs::metadata(second.join("rootfs.ext4")).unwrap().ino(), inode);
 }

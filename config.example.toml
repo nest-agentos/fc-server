@@ -13,6 +13,9 @@ kernel = "/var/lib/mindos-images/vmlinux"
 rootfs = "/var/lib/mindos-images/debian13.ext4"
 vcpus = 2
 memory_mib = 1024
+# Optional administrator ceilings; omitted ceilings equal the defaults above.
+# max_vcpus = 4
+# max_memory_mib = 4096
 max_lifetime_secs = 3600
 startup_timeout_secs = 20
 max_connections = 16

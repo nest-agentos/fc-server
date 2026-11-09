@@ -61,7 +61,9 @@ async fn launch_vm(
 ) -> Result<Vm, Error> {
     let started = Instant::now();
     let operation = uuid::Uuid::new_v4().to_string();
-    let profile = config.profiles[&spec.profile].clone();
+    let profile = spec.resources.resolve(&config.profiles[&spec.profile])?;
+    tracing::info!(operation_id=%operation, operation="vm_create", stage="resources_resolved",
+        vm_id=%spec.id, vcpus=profile.vcpus, memory_mib=profile.memory_mib, result="success");
     let result = VmLauncher(config.clone())
         .launch(spec, &profile, volumes, uid)
         .instrument(tracing::info_span!("vm_create", operation_id=%operation, vm_id=%spec.id))

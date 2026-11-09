@@ -98,6 +98,7 @@ async fn source_aliases_cannot_be_exported_to_concurrent_vms() {
     let spec = CreateVm {
         id: "other".into(),
         profile: "test".into(),
+        resources: Default::default(),
         volumes: vec![],
         directories: vec!["alias".into()],
         proxy: None,
@@ -112,6 +113,7 @@ async fn proxy_selection_requires_profile_authorization() {
     let spec = firecracker_server::manager::CreateVm {
         id: "new-vm".into(),
         profile: "test".into(),
+        resources: Default::default(),
         volumes: vec![],
         directories: vec![],
         proxy: Some("not-authorized".into()),
@@ -191,6 +193,7 @@ fn tunnel_manager(config: Config) -> firecracker_server::manager::Shared {
         spec: CreateVm {
             id: "test-vm".into(),
             profile: "test".into(),
+            resources: Default::default(),
             volumes: vec![],
             directories: vec![],
             proxy: None,

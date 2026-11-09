@@ -3,6 +3,8 @@ version: 1
 vm:
   id: cell-x1
   profile: services
+  resources:
+    memory_mib: 4096
   proxy: clash
 rootfs:
   persistent: true

@@ -22,6 +22,8 @@ use tokio_util::sync::CancellationToken;
 pub struct CreateVm {
     pub id: String,
     pub profile: String,
+    #[serde(default, skip_serializing_if = "crate::resources::Resources::is_empty")]
+    pub resources: crate::resources::Resources,
     #[serde(default)]
     pub volumes: Vec<String>,
     #[serde(default)]
@@ -77,6 +79,7 @@ impl Manager {
     pub fn reserve_vm(&mut self, spec: &CreateVm) -> Result<(Config, Vec<Volume>, u32), Error> {
         self.validate_create(spec)?;
         let profile = &self.config.profiles[&spec.profile];
+        spec.resources.resolve(profile)?;
         if spec.proxy.as_ref().is_some_and(|id| !profile.allowed_proxies.contains(id)) {
             return Err(Error::new(StatusCode::FORBIDDEN, "PROXY_NOT_AUTHORIZED", "proxy_select"));
         }
@@ -162,11 +165,13 @@ impl Manager {
     pub fn view(&self, id: &str) -> serde_json::Value {
         if let Some(pending) = self.pending_vms.get(id) {
             return serde_json::json!({"id":id,"profile":pending.spec.profile,"volumes":pending.spec.volumes,
-                "directories":pending.spec.directories,"proxy":pending.spec.proxy,"state":pending.state,"guestReady":false});
+                "resources":pending.spec.resources.effective(&self.config.profiles[&pending.spec.profile]),
+                "requestedResources":pending.spec.resources,"directories":pending.spec.directories,"proxy":pending.spec.proxy,"state":pending.state,"guestReady":false});
         }
         let vm = &self.vms[id];
         serde_json::json!({"id":id,"profile":vm.spec.profile,"volumes":vm.spec.volumes,"directories":vm.spec.directories,
-            "state":"vmm-running","guestReady":false,"ageSecs":vm.born.elapsed().as_secs(),
+            "resources":vm.spec.resources.effective(&self.config.profiles[&vm.spec.profile]),
+            "requestedResources":vm.spec.resources,"state":"vmm-running","guestReady":false,"ageSecs":vm.born.elapsed().as_secs(),
             "rootfsPersistent":self.config.profiles[&vm.spec.profile].rootfs_persistent,"proxy":vm.spec.proxy,
             "ports":vm.publications.values().map(|port| &port.spec).collect::<Vec<_>>()})
     }

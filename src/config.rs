@@ -53,6 +53,8 @@ pub struct Profile {
     pub upper_size_mib: u32,
     pub vcpus: u8,
     pub memory_mib: u32,
+    pub max_vcpus: Option<u8>,
+    pub max_memory_mib: Option<u32>,
     pub max_lifetime_secs: u64,
     pub startup_timeout_secs: u64,
     pub max_connections: usize,
@@ -284,6 +286,7 @@ impl Profile {
         ensure!((1..=64).contains(&self.max_connections), "invalid connection limit");
         ensure!(!self.ports.is_empty() && self.ports.len() <= 16, "1..16 ports required");
         ensure!(self.ports.iter().all(|p| (1024..1073741824).contains(p)), "invalid vsock port");
+        crate::resources::validate_limits(self)?;
         self.validate_network()
     }
     fn validate_network(&self) -> Result<()> {

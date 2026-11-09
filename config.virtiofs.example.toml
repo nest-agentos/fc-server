@@ -17,6 +17,9 @@ initrd = "/var/lib/mindos-images/debian13.ext4.initrd"
 upper_size_mib = 2048
 vcpus = 2
 memory_mib = 1024
+# Optional administrator ceilings; omitted ceilings equal the defaults above.
+# max_vcpus = 4
+# max_memory_mib = 4096
 max_lifetime_secs = 3600
 startup_timeout_secs = 30
 max_connections = 16

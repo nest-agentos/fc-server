@@ -61,6 +61,7 @@ async fn root_deletion_requires_detached_vm_and_valid_id() {
     let spec = CreateVm {
         id: "retained".into(),
         profile: "test".into(),
+        resources: Default::default(),
         volumes: vec![],
         directories: vec![],
         proxy: None,
@@ -90,6 +91,7 @@ async fn unlimited_lifetime_still_reaps_exited_vms() {
     let spec = CreateVm {
         id: "retained".into(),
         profile: "test".into(),
+        resources: Default::default(),
         volumes: vec![],
         directories: vec![],
         proxy: None,
@@ -117,6 +119,7 @@ async fn slow_import_does_not_block_queries_or_another_vm_stop() {
     let spec = CreateVm {
         id: "independent".into(),
         profile: "test".into(),
+        resources: Default::default(),
         volumes: vec![],
         directories: vec![],
         proxy: None,
@@ -198,6 +201,7 @@ async fn launch_reservations_keep_uids_and_volumes_exclusive() {
     let spec = CreateVm {
         id: "first".into(),
         profile: "test".into(),
+        resources: Default::default(),
         volumes: vec!["disk".into()],
         directories: vec![],
         proxy: None,
@@ -240,4 +244,27 @@ async fn shutdown_waits_for_inflight_import_without_blocking_the_catalog() {
     worker.await.unwrap().unwrap();
     draining.await.unwrap();
     assert!(shared.lock().await.pending_volumes.is_empty());
+}
+
+#[tokio::test]
+async fn invalid_compute_request_is_rejected_before_reservation_or_launch() {
+    let root = tempfile::tempdir().unwrap();
+    let state = shared(root.path());
+    let mut spec = CreateVm {
+        id: "resize".into(),
+        profile: "test".into(),
+        resources: Default::default(),
+        volumes: vec![],
+        directories: vec![],
+        proxy: None,
+    };
+    spec.resources.memory_mib = Some(4096);
+    assert_eq!(
+        create_vm(state.clone(), spec.clone()).await.unwrap_err().code,
+        "RESOURCE_MEMORY_NOT_AUTHORIZED"
+    );
+    let manager = state.lock().await;
+    assert!(manager.pending_vms.is_empty());
+    assert!(manager.vms.is_empty());
+    assert!(!launcher::jail(&manager.config, &spec.id).exists());
 }

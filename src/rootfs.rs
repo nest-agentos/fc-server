@@ -15,9 +15,10 @@ pub fn directory(config: &Config, id: &str) -> PathBuf {
 }
 
 fn manifest(config: &Config, spec: &CreateVm, profile: &Profile) -> Value {
-    // Network policy changes must not invalidate an existing writable root.
+    // Network and compute changes must not invalidate an existing writable root.
     let mut storage_spec = spec.clone();
     storage_spec.proxy = None;
+    storage_spec.resources = Default::default();
     let bindings: Vec<_> = profile.bindings.iter().map(|name| {
         let b = &config.bindings[name];
         json!({"id":name,"source":b.source,"target":b.target,"readOnly":b.read_only,"backend":b.backend})

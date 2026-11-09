@@ -59,6 +59,26 @@ guest 的 `/home/agent`、`/etc` 和已安装软件等根盘修改会保留。`/
 
 首次创建使用临时目录和完成清单提交；失败初始化会回滚。管理进程在初始化期间被强杀时可能留下 `VM_ID.initializing`，须确认无关联 VMM 后核对该未完成目录。异常退出的旧 jail/cgroup 仍按 README 的既有流程处理，不自动接管未知进程。ext4 提供崩溃恢复基础，强停不承诺尚未落盘的应用数据。
 
+## 实例 CPU 与内存
+
+实例可在私有 YAML 中声明部分或全部资源字段：
+
+```yaml
+vm:
+  id: cell-x1
+  profile: services
+  resources:
+    memory_mib: 4096
+```
+
+省略的字段继承 profile 默认值。服务 `service.toml` 也支持 `[resources]` 表；YAML 存在 `vm.resources` 时使用该表替换 manifest 的资源请求，其余字段继承 profile。直接创建 VM 的 API 接受同样的 `resources: {vcpus, memory_mib}` 对象。
+
+管理员在已有 profile 中设置 `max_vcpus` / `max_memory_mib` 上限；省略时上限等于该 profile 的默认值，保持旧授权边界。默认值不随实例请求修改。例如，`memory_mib = 1024`、`max_memory_mib = 4096` 允许实例申请最多 4 GiB，未申请的实例仍使用 1 GiB。CPU 支持 1 或不超过 32 的偶数，内存范围为 128–65536 MiB；超出范围或授权上限会报告不同错误。管理员修改 profile 后需重启管理服务；先停止所有活动 VM 及其监督服务。
+
+运行中的实例不能热调整。修改私有 YAML 后执行 `./vmm.sh environment check FILE.yaml`，再执行 `./vmm.sh environment apply FILE.yaml`；资源授权预检查在停止实例之前完成。`apply` 也会按原语义重新应用 YAML 的 Git 环境配置。更新服务 manifest 时，按原流程停止监督服务、重新安装服务包、启动。CPU/内存变更复用原持久根盘，不需要销毁 VM 或迁移数据。
+
+请求随服务包保存，监督恢复、宿主重启和 `reboot` 会保留。启动器将同一有效资源同时用于 Firecracker、VMM cgroup 与 virtiofsd cgroup。`list` 的 VCPUS/MEM_MIB 列及 JSON 的 `resources` 显示活动实例的有效资源；管理 API 另返回 `requestedResources`，表示实例覆盖值。
+
 ## 安装与运行服务
 
 示例包见 [python-web](../examples/python-web/service.toml)，所有字段由通用服务层解释：

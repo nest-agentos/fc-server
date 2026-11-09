@@ -83,7 +83,8 @@ async fn health() -> Json<serde_json::Value> {
 async fn profiles(State(api): State<Api>) -> Json<serde_json::Value> {
     let manager = api.manager.lock().await;
     let profiles: Vec<_> = manager.config.profiles.iter().map(|(id, p)| json!({"id":id,"vcpus":p.vcpus,
-        "memoryMiB":p.memory_mib,"ports":p.ports,"bindings":p.bindings,"allowedProxies":p.allowed_proxies,"network":!p.network_slots.is_empty()})).collect();
+        "memoryMiB":p.memory_mib,"maxVcpus":p.max_vcpus.unwrap_or(p.vcpus),
+        "maxMemoryMiB":p.max_memory_mib.unwrap_or(p.memory_mib),"ports":p.ports,"bindings":p.bindings,"allowedProxies":p.allowed_proxies,"network":!p.network_slots.is_empty()})).collect();
     let bindings: Vec<_> = manager.config.bindings.iter().map(|(id,b)| json!({"id":id,"target":b.target,"backend":b.backend,"readOnly":b.read_only,"sizeMiB":b.size_mib})).collect();
     Json(json!({"profiles":profiles,"bindings":bindings}))
 }

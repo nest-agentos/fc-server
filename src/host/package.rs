@@ -32,6 +32,8 @@ fn is_false(value: &bool) -> bool {
 pub struct Service {
     pub id: String,
     pub profile: String,
+    #[serde(default, skip_serializing_if = "crate::resources::Resources::is_empty")]
+    pub resources: crate::resources::Resources,
     #[serde(default)]
     pub directories: Vec<String>,
     #[serde(default)]
@@ -78,6 +80,8 @@ struct FileSource {
 struct Manifest {
     id: String,
     profile: String,
+    #[serde(default)]
+    resources: crate::resources::Resources,
     #[serde(default)]
     directories: Vec<String>,
     #[serde(default)]
@@ -223,6 +227,7 @@ pub fn definition(path: &Path) -> Result<Service> {
     let service = Service {
         id: m.id,
         profile: m.profile,
+        resources: m.resources,
         directories: m.directories,
         volumes: m.volumes,
         proxy: m.proxy,
@@ -242,6 +247,7 @@ pub fn definition(path: &Path) -> Result<Service> {
 
 pub fn resources(host: &Host, service: &Service) -> Result<()> {
     let profile = host.config.profiles.get(&service.profile).context("UNKNOWN_PROFILE")?;
+    service.resources.resolve(profile).map_err(|error| anyhow::anyhow!("{}", error.code))?;
     ensure!(!profile.network_slots.is_empty(), "PROFILE_REQUIRES_SSH_NETWORK");
     for id in &service.directories {
         ensure!(
@@ -331,6 +337,14 @@ mod tests {
         assert!(!serde_json::to_string(&service)
             .unwrap()
             .contains(&root.path().to_string_lossy().to_string()));
+    }
+    #[test]
+    fn manifest_supports_optional_partial_compute_requests() {
+        let root = tempfile::tempdir().unwrap();
+        let path = manifest(root.path(), "[resources]\nmemory_mib=4096");
+        let service = definition(&path).unwrap();
+        assert_eq!(service.resources.memory_mib, Some(4096));
+        assert_eq!(service.resources.vcpus, None);
     }
     #[test]
     fn overwrite_is_an_explicit_per_file_policy() {

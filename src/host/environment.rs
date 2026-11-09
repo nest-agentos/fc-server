@@ -57,6 +57,8 @@ struct Document {
 struct Vm {
     id: String,
     profile: String,
+    #[serde(default)]
+    resources: Option<crate::resources::Resources>,
     proxy: Option<String>,
 }
 #[derive(Deserialize)]
@@ -141,6 +143,9 @@ fn compile(path: &Path) -> Result<(Document, Package)> {
     let mut definition = package::definition(&resolve(root, &document.service.manifest))?;
     definition.profile = document.vm.profile.clone();
     definition.proxy = document.vm.proxy.clone();
+    if let Some(resources) = &document.vm.resources {
+        definition.resources = resources.clone();
+    }
     definition.user_environment = Some(UserEnvironment {
         git: Git {
             user: document.git.user.clone(),
@@ -253,6 +258,26 @@ mod tests {
         assert!(environment.git.github.private_key.contains("fixture-secret"));
         assert!(!environment.git.github.known_hosts.contains("other.test"));
         assert!(!format!("{environment:?}").contains("fixture-secret"));
+    }
+    #[test]
+    fn yaml_resource_requests_override_manifest_and_survive_snapshot_roundtrip() {
+        let root = tempfile::tempdir().unwrap();
+        let path = fixture(root.path());
+        let manifest = root.path().join("service.toml");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(&manifest, text + "[resources]\nvcpus=1\nmemory_mib=2048\n").unwrap();
+        let content = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("profile: services}", "profile: services, resources: {memory_mib: 4096}}");
+        std::fs::write(&path, content).unwrap();
+        let (_, package) = compile(&path).unwrap();
+        let restored: Package =
+            serde_json::from_slice(&serde_json::to_vec(&package).unwrap()).unwrap();
+        assert_eq!(restored.definition.resources.memory_mib, Some(4096));
+        assert_eq!(restored.definition.resources.vcpus, None);
+        fixture(root.path());
+        let (_, package) = compile(&path).unwrap();
+        assert!(package.definition.resources.is_empty());
     }
     #[test]
     fn unknown_fields_and_malformed_yaml_never_echo_input() {
