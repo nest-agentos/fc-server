@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import subprocess
 import tomllib
 import unittest
 from unittest.mock import patch
@@ -73,5 +74,47 @@ class Updates(unittest.TestCase):
         (self.root/'config.toml').unlink();(self.root/'config.toml').symlink_to(self.key)
         with self.assertRaisesRegex(update.UpdateError,'INVALID_FILE_SOURCE'):
             update.snapshot(self.manifest,self.key,self.root/'stage')
+
+    def test_remembers_per_vm_paths_without_copying_credentials(self):
+        directory=self.root/'preferences'
+        target=update.remember_paths('vm',self.manifest,self.key,directory)
+        self.assertEqual(update.resolve_paths('vm',directory=directory),(self.manifest,self.key))
+        self.assertEqual(target.stat().st_mode&0o777,0o600)
+        self.assertNotIn('fixture-identity',target.read_text())
+        self.assertNotIn('fixture-secret',target.read_text())
+        with self.assertRaisesRegex(update.UpdateError,'DEFAULTS_MISSING'):
+            update.resolve_paths('other',directory=directory)
+
+    def test_explicit_paths_override_saved_values_and_expand_invoking_home(self):
+        directory=self.root/'preferences';update.remember_paths('vm',self.manifest,self.key,directory)
+        user=type('User',(),{'pw_dir':str(self.root)})()
+        with patch.object(update,'invoking_user',return_value=user):
+            self.assertEqual(update.resolve_paths('vm','~/replacement.toml',directory=directory),(self.root/'replacement.toml',self.key))
+        self.assertEqual(update.resolve_paths('vm',identity=self.root/'new-key',directory=directory),(self.manifest,self.root/'new-key'))
+
+    def test_corrupt_defaults_or_invalid_vm_ids_never_guess_paths(self):
+        directory=self.root/'preferences';target=update.remember_paths('vm',self.manifest,self.key,directory)
+        target.write_text('{"version":1,"vm":"other"}')
+        with self.assertRaisesRegex(update.UpdateError,'DEFAULTS_INVALID'):
+            update.resolve_paths('vm',directory=directory)
+        with self.assertRaisesRegex(update.UpdateError,'INVALID_VM_ID'):
+            update.resolve_paths('../vm',directory=directory)
+
+    def test_vm_only_cli_resolves_paths_and_remembers_only_after_success(self):
+        with patch.object(update,'resolve_paths',return_value=(self.manifest,self.key)) as resolve,patch.object(update,'update') as apply,patch.object(update,'remember_paths') as remember:
+            with patch('sys.argv',['update-service.py','server','vm']):update.main()
+            resolve.assert_called_once_with('vm',None,None)
+            apply.assert_called_once_with('server','vm',self.manifest,self.key,False)
+            remember.assert_called_once_with('vm',self.manifest,self.key)
+        with patch.object(update,'resolve_paths',return_value=(self.manifest,self.key)),patch.object(update,'update',side_effect=update.UpdateError('FAILED')),patch.object(update,'remember_paths') as remember:
+            with patch('sys.argv',['update-service.py','server','vm']),self.assertRaises(SystemExit):update.main()
+            remember.assert_not_called()
+
+    def test_short_alias_and_service_update_dispatch_the_same_vm_argument(self):
+        script=Path(__file__).resolve().parents[1]/'vmm.sh'
+        command='source "$1"; init(){ :; }; update_service(){ printf "%s\\n" "$@"; }; shift; main "$@"'
+        for arguments in [['update','cell-x1'],['service','update','cell-x1']]:
+            result=subprocess.run(['bash','-c',command,'fixture',str(script),*arguments],capture_output=True,text=True,check=True)
+            self.assertEqual(result.stdout.strip(),'cell-x1')
 
 if __name__=='__main__':unittest.main()

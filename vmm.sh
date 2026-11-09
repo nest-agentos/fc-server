@@ -26,8 +26,9 @@ No command: show this help.
   start ID [DIRECTORY...]  Create a debian13 VM, optionally with authorized directory bindings.
   stop ID  Stop a VM; persistent roots/volumes are retained, temporary root disks deleted.
   reboot ID  Restart a managed service VM, or recreate an ordinary VM and restore its ports.
+  update ID  Update a managed service using its saved source and SSH identity.
   service <update|install|setup|start|up|stop|destroy|status> ...  Manage generic guest services.
-  service update ID FILE --identity KEY [--enable]  Replace declared service files; retain sessions/root.
+  service update ID [FILE --identity KEY] [--enable]  Reuse saved source/key; replace declared files and retain sessions/root.
   environment <check|up|apply> FILE.yaml  Provision a user environment from one private YAML.
   check    Check installed paths, config, KVM, cgroup v2 and namespace support.
   smoke    Run real KVM block-volume and virtio-fs acceptance with disposable fixtures.
@@ -65,6 +66,11 @@ host_cli() {
     local server=${FIRECRACKER_SERVER:-/usr/local/bin/firecracker-server}
     [[ -x $server ]] || die 'install the Rust runtime first with ./vmm.sh setup --os'
     as_root "$server" "$@"
+}
+
+update_service() {
+    stage=service-update
+    as_root python3 "$root/scripts/update-service.py" "${FIRECRACKER_SERVER:-/usr/local/bin/firecracker-server}" "$@"
 }
 
 init() {
@@ -424,11 +430,11 @@ case ${1:-help} in
     network) validate_build_options "${@:2}"; init; require_os_assets "${@:2}"; network_setup "${@:2}" ;;
     shared-root) validate_build_options "${@:2}"; init; require_os_assets "${@:2}"; shared_root_setup "${@:2}" ;;
     ssh) init; ssh_vm "${@:2}" ;;
+    update) init; update_service "${@:2}" ;;
     service)
         init
         if [[ ${2:-} == update ]]; then
-            stage=service-update
-            as_root python3 "$root/scripts/update-service.py" "${FIRECRACKER_SERVER:-/usr/local/bin/firecracker-server}" "${@:3}"
+            update_service "${@:3}"
         else host_cli service "${@:2}"; fi ;;
     environment|list) init; host_cli "$1" "${@:2}" ;;
     ip) init; host_cli network address "${2:?VM_ID required}" | cut -d ' ' -f 1 ;;

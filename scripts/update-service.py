@@ -2,6 +2,8 @@
 """Apply a source package to one managed VM while retaining its persistent root."""
 import argparse
 import json
+import os
+import pwd
 from pathlib import Path
 import re
 import shutil
@@ -137,14 +139,82 @@ def update(server, vm, manifest, identity, enable=False):
         raise
 
 
+def invoking_user():
+    return pwd.getpwuid(int(os.environ.get('SUDO_UID', os.getuid())))
+
+
+def settings_path(vm, directory=None):
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,47}', vm):
+        raise UpdateError('INVALID_VM_ID')
+    root = Path(directory) if directory else Path(invoking_user().pw_dir) / '.config/mindos-firecracker/services'
+    return root / (vm + '.json')
+
+
+def expand_path(value):
+    text = str(value)
+    if text == '~' or text.startswith('~/'):
+        return (Path(invoking_user().pw_dir) / text[2:]).resolve()
+    return Path(text).expanduser().resolve()
+
+
+def resolve_paths(vm, manifest=None, identity=None, directory=None):
+    target = settings_path(vm, directory)
+    record = {}
+    if target.exists() and (manifest is None or identity is None):
+        try:
+            record = json.loads(target.read_text())
+            if record.get('version') != 1 or record.get('vm') != vm:
+                raise ValueError()
+        except (ValueError, AttributeError) as error:
+            raise UpdateError('SERVICE_UPDATE_DEFAULTS_INVALID') from error
+    manifest = manifest if manifest is not None else record.get('manifest')
+    identity = identity if identity is not None else record.get('identity')
+    if not isinstance(manifest, (str, Path)) or not isinstance(identity, (str, Path)):
+        raise UpdateError('SERVICE_UPDATE_DEFAULTS_MISSING_USE_MANIFEST_AND_IDENTITY')
+    return expand_path(manifest), expand_path(identity)
+
+
+def remember_paths(vm, manifest, identity, directory=None):
+    target, user = settings_path(vm, directory), invoking_user()
+    created, parent = [], target.parent
+    while not parent.exists():
+        created.append(parent); parent = parent.parent
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for parent in created:
+        parent.chmod(0o700)
+        if os.geteuid() == 0:
+            os.chown(parent, user.pw_uid, user.pw_gid)
+    record = {'version': 1, 'vm': vm, 'manifest': str(expand_path(manifest)), 'identity': str(expand_path(identity))}
+    with tempfile.NamedTemporaryFile(mode='w', dir=target.parent, prefix='.' + vm + '-', delete=False) as temporary:
+        try:
+            os.fchmod(temporary.fileno(), 0o600)
+            if os.geteuid() == 0:
+                os.fchown(temporary.fileno(), user.pw_uid, user.pw_gid)
+            json.dump(record, temporary); temporary.flush(); os.fsync(temporary.fileno())
+            os.replace(temporary.name, target)
+        finally:
+            Path(temporary.name).unlink(missing_ok=True)
+    return target
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('server'); parser.add_argument('vm'); parser.add_argument('manifest', type=Path)
-    parser.add_argument('--identity', required=True, type=Path); parser.add_argument('--enable', action='store_true')
+    parser.add_argument('server'); parser.add_argument('vm'); parser.add_argument('manifest', nargs='?', type=Path)
+    parser.add_argument('--identity', type=Path); parser.add_argument('--enable', action='store_true')
     args = parser.parse_args()
     try:
-        update(args.server, args.vm, args.manifest, args.identity, args.enable)
+        manifest, identity = resolve_paths(args.vm, args.manifest, args.identity)
+    except Exception as error:
+        print(json.dumps({'operation':'service.update.defaults','stage':'resolve-or-save','result':'failure','code':str(error) if isinstance(error, UpdateError) else 'SERVICE_UPDATE_DEFAULTS_IO_FAILED'}), flush=True)
+        raise SystemExit(1)
+    try:
+        update(args.server, args.vm, manifest, identity, args.enable)
     except Exception:
+        raise SystemExit(1)
+    try:
+        remember_paths(args.vm, manifest, identity)
+    except Exception:
+        print(json.dumps({'operation':'service.update.defaults','stage':'save','result':'failure','code':'SERVICE_UPDATE_DEFAULTS_SAVE_FAILED'}), flush=True)
         raise SystemExit(1)
 
 
