@@ -75,40 +75,50 @@ class Updates(unittest.TestCase):
         with self.assertRaisesRegex(update.UpdateError,'INVALID_FILE_SOURCE'):
             update.snapshot(self.manifest,self.key,self.root/'stage')
 
-    def test_remembers_per_vm_paths_without_copying_credentials(self):
-        directory=self.root/'preferences'
-        target=update.remember_paths('vm',self.manifest,self.key,directory)
-        self.assertEqual(update.resolve_paths('vm',directory=directory),(self.manifest,self.key))
-        self.assertEqual(target.stat().st_mode&0o777,0o600)
-        self.assertNotIn('fixture-identity',target.read_text())
-        self.assertNotIn('fixture-secret',target.read_text())
-        with self.assertRaisesRegex(update.UpdateError,'DEFAULTS_MISSING'):
-            update.resolve_paths('other',directory=directory)
-
-    def test_explicit_paths_override_saved_values_and_expand_invoking_home(self):
-        directory=self.root/'preferences';update.remember_paths('vm',self.manifest,self.key,directory)
+    def default_paths(self):
+        source=self.root/'service-sources'/'test'/'service.toml';source.parent.mkdir(parents=True);source.write_bytes(self.manifest.read_bytes())
+        identity=self.root/'.ssh/mindos-firecracker';identity.parent.mkdir();identity.write_bytes(self.key.read_bytes())
         user=type('User',(),{'pw_dir':str(self.root)})()
-        with patch.object(update,'invoking_user',return_value=user):
-            self.assertEqual(update.resolve_paths('vm','~/replacement.toml',directory=directory),(self.root/'replacement.toml',self.key))
-        self.assertEqual(update.resolve_paths('vm',identity=self.root/'new-key',directory=directory),(self.manifest,self.root/'new-key'))
+        return source,identity,user
 
-    def test_corrupt_defaults_or_invalid_vm_ids_never_guess_paths(self):
-        directory=self.root/'preferences';target=update.remember_paths('vm',self.manifest,self.key,directory)
-        target.write_text('{"version":1,"vm":"other"}')
-        with self.assertRaisesRegex(update.UpdateError,'DEFAULTS_INVALID'):
-            update.resolve_paths('vm',directory=directory)
+    def test_defaults_use_registered_service_id_and_calling_users_ssh_key(self):
+        source,identity,user=self.default_paths()
+        with patch.object(update,'invoke',return_value=self.status) as invoke,patch.object(update,'invoking_user',return_value=user):
+            resolved=update.resolve_paths('server','vm',source_root=self.root/'service-sources')
+            self.assertEqual(resolved,(source,identity))
+            invoke.assert_called_once_with('server','service','status','vm')
+        self.assertFalse((self.root/'.config').exists())
+
+    def test_explicit_paths_and_tilde_override_defaults_without_lookup(self):
+        source,identity,user=self.default_paths()
+        with patch.object(update,'invoke') as invoke,patch.object(update,'invoking_user',return_value=user):
+            self.assertEqual(update.resolve_paths('server','vm','~/service.toml','~/identity'),(self.manifest,self.key))
+            invoke.assert_not_called()
+
+    def test_missing_key_or_source_and_invalid_service_ids_fail_without_stopping(self):
+        source,identity,user=self.default_paths()
+        with patch.object(update,'invoking_user',return_value=user),patch.object(update,'invoke',return_value={'service':'../other'}):
+            with self.assertRaisesRegex(update.UpdateError,'INVALID_SERVICE_BINDING'):
+                update.resolve_paths('server','vm',source_root=self.root/'service-sources')
+        source.unlink()
+        with patch.object(update,'invoking_user',return_value=user),patch.object(update,'invoke',return_value=self.status):
+            with self.assertRaisesRegex(update.UpdateError,'SOURCE_MISSING_USE_MANIFEST'):
+                update.resolve_paths('server','vm',source_root=self.root/'service-sources')
+        identity.unlink()
+        with patch.object(update,'invoking_user',return_value=user),patch.object(update,'invoke') as invoke:
+            with self.assertRaisesRegex(update.UpdateError,'IDENTITY_MISSING_USE_IDENTITY'):
+                update.resolve_paths('server','vm',source_root=self.root/'service-sources')
+            invoke.assert_not_called()
         with self.assertRaisesRegex(update.UpdateError,'INVALID_VM_ID'):
-            update.resolve_paths('../vm',directory=directory)
+            update.resolve_paths('server','../vm')
 
-    def test_vm_only_cli_resolves_paths_and_remembers_only_after_success(self):
-        with patch.object(update,'resolve_paths',return_value=(self.manifest,self.key)) as resolve,patch.object(update,'update') as apply,patch.object(update,'remember_paths') as remember:
+    def test_vm_only_cli_resolves_default_paths_without_writing_preferences(self):
+        with patch.object(update,'resolve_paths',return_value=(self.manifest,self.key)) as resolve,patch.object(update,'update') as apply:
             with patch('sys.argv',['update-service.py','server','vm']):update.main()
-            resolve.assert_called_once_with('vm',None,None)
+            resolve.assert_called_once_with('server','vm',None,None)
             apply.assert_called_once_with('server','vm',self.manifest,self.key,False)
-            remember.assert_called_once_with('vm',self.manifest,self.key)
-        with patch.object(update,'resolve_paths',return_value=(self.manifest,self.key)),patch.object(update,'update',side_effect=update.UpdateError('FAILED')),patch.object(update,'remember_paths') as remember:
+        with patch.object(update,'resolve_paths',return_value=(self.manifest,self.key)),patch.object(update,'update',side_effect=update.UpdateError('FAILED')):
             with patch('sys.argv',['update-service.py','server','vm']),self.assertRaises(SystemExit):update.main()
-            remember.assert_not_called()
 
     def test_short_alias_and_service_update_dispatch_the_same_vm_argument(self):
         script=Path(__file__).resolve().parents[1]/'vmm.sh'

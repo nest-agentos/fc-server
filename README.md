@@ -48,13 +48,13 @@ cd ~/share/prj/x1/tools/fc-server
 
 `cell-x1` 由 `firecracker-workload@cell-x1.service` 监督。更新它的服务包时，停止这个实例的监督服务即可，不需要停止全局的 `firecracker-server.service`，也不会停止其他 VM。
 
-推荐使用单命令更新，它会按服务源覆盖包内声明的文件，停止旧实例、安装并启动，同时保留持久根盘里的 Session 和项目登记数据。已登记参数的 VM 只需：
+推荐使用单命令更新，它会按服务源覆盖包内声明的文件，停止旧实例、安装并启动，同时保留持久根盘里的 Session 和项目登记数据。已有服务绑定的 VM 只需：
 
 ```bash
 ./vmm.sh update cell-x1
 ```
 
-首次更新指定服务源和 SSH 身份：
+需要使用其他服务源或 SSH 身份时，可显式指定：
 
 ```bash
 ./vmm.sh service update cell-x1 \
@@ -62,7 +62,7 @@ cd ~/share/prj/x1/tools/fc-server
   --identity /home/li/.ssh/mindos-firecracker --enable
 ```
 
-更新成功后，路径保存在调用用户的 `~/.config/mindos-firecracker/services/cell-x1.json`，权限 0600，仅记录路径，不保存私钥或环境变量。后续可以只传 VM ID；`./vmm.sh service update cell-x1` 为同一入口。也可显式覆盖 manifest 或 `--identity`；带引号的 `~/` 按调用用户的家目录展开，sudo 不会把它解释成 root 的家目录。失败不覆盖已保存的路径。
+默认根据 VM 已绑定的服务 ID 查找 `/etc/mindos-firecracker/service-sources/<service-id>/service.toml`，管理 SSH 私钥使用调用用户的 `~/.ssh/mindos-firecracker`。例如 VM `cell-x1` 绑定服务 `cells-x1`，读取的就是 `/etc/mindos-firecracker/service-sources/cells-x1/service.toml`。sudo 下仍按原调用用户的家目录查找，带引号的 `~/` 也按该用户展开。找不到默认文件会在停止 VM 前报错，可用显式 manifest 和 `--identity` 指定其他位置。`./vmm.sh service update cell-x1` 为同一入口，不另存用户路径索引。
 
 `update` 在停止前快照 manifest、声明文件与管理 SSH 身份并检查服务绑定和持久根盘。它只替换 `files` 声明的文件，不镜像删除目录，不删除根盘；原始 manifest 不会被改写。默认恢复原有开机启用状态，`--enable` 显式启用。它拒绝更换 profile、目录/卷集合及临时根盘；资源环境迁移使用 `environment apply`。失败按 prepare/stop/install/start 阶段报告，不自动重复安装或删除数据。普通 `service install` 仍遵循每个文件的 `overwrite` 设置；`update` 对本次安装快照中的声明文件统一启用覆盖，因此不要把 Session 历史或数据库声明为包内文件。
 

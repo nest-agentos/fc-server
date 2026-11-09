@@ -26,9 +26,9 @@ No command: show this help.
   start ID [DIRECTORY...]  Create a debian13 VM, optionally with authorized directory bindings.
   stop ID  Stop a VM; persistent roots/volumes are retained, temporary root disks deleted.
   reboot ID  Restart a managed service VM, or recreate an ordinary VM and restore its ports.
-  update ID  Update a managed service using its saved source and SSH identity.
+  update ID  Update a managed service from /etc sources using ~/.ssh/mindos-firecracker.
   service <update|install|setup|start|up|stop|destroy|status> ...  Manage generic guest services.
-  service update ID [FILE --identity KEY] [--enable]  Reuse saved source/key; replace declared files and retain sessions/root.
+  service update ID [FILE --identity KEY] [--enable]  Resolve source by service binding; retain sessions/root.
   environment <check|up|apply> FILE.yaml  Provision a user environment from one private YAML.
   check    Check installed paths, config, KVM, cgroup v2 and namespace support.
   smoke    Run real KVM block-volume and virtio-fs acceptance with disposable fixtures.
