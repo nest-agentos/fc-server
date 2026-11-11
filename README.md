@@ -584,6 +584,8 @@ sudo systemctl restart firecracker-server
 
 活动直通目录互斥，普通不重叠目录可并行使用。同一文件系统的不同 mount ID 保守互斥，以覆盖直接 bind 子目录形成的别名；不能据此假设所有宿主应用都受此锁约束。daemon 能访问所属 VM 的共享 RAM，应视为该 VM 的受信任组件，不跨 VM 复用。
 
+virtio-fs binding 可显式配置 `cache = "auto"`，以支持 Chrome ICU 等文件的共享 mmap；省略时保留 `never`（DIRECT_IO）行为。只接受 `auto/never`，块设备 binding 不接受非默认缓存策略。`auto` 使用标准 close-to-open 缓存语义，不保证宿主修改已打开或已映射文件后立即可见；需要读取最新源码时重新打开文件。未使用要求目录独占的 `--allow-mmap`，也不改变只读、目录授权或 sandbox 边界。修改配置后须重启管理服务并重建相应 VM 的 virtiofsd 连接；替换文件本身不能改变既有连接。启动诊断的 `virtiofs_start/cache_policy` 记录实际选择。验收须同时覆盖 MAP_SHARED、真实 Chrome 和宿主修改后的重新读取。
+
 ## 网络、回收与诊断
 
 管理服务不创建网卡或基础出网网络；端口发布规则由管理服务随 VM 生命周期更新。可用上述 `./vmm.sh network` 在部署阶段准备受限公网出网，或由管理员预先配置 TAP、netns、DHCP/DNS 和防火墙，再通过 `profile.network_slots` 指定。数组按全局 UID 槽位索引，需覆盖 `max_vms` 个槽位；不同 profile 也应为同一槽位选择相容的预置网络。每个槽位的网卡限制由对应 netns 的防火墙实施。

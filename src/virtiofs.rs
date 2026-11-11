@@ -57,8 +57,6 @@ const DAEMON_OPTIONS: &[&str] = &[
     "namespace",
     "--seccomp",
     "kill",
-    "--cache",
-    "never",
     "--inode-file-handles=never",
     "--rlimit-nofile",
     "65536",
@@ -115,6 +113,8 @@ pub async fn start(
     let stage = launcher::jail(config, id).join("source");
     std::fs::create_dir(&stage).map_err(|e| Error::io("source_mount_dir", e))?;
     let command = sandbox(config, &socket_dir, binding, &stage)?;
+    tracing::info!(operation_id=%operation, operation="virtiofs_start", stage="cache_policy",
+        cache=binding.cache.as_str(), result="configured", elapsed_ms=started.elapsed().as_millis() as u64);
     let mut child = spawn(&command, id, source.as_raw_fd(), &stage, binding.read_only)?;
     let result = ready(&mut child, &socket_dir.join("fs.sock"), uid, deadline).await;
     audit(&operation, "virtiofs_start", "backend_listening", started, result.is_ok());
@@ -157,6 +157,7 @@ fn sandbox(
     command.arg(if binding.read_only { "--ro-bind" } else { "--bind" }).arg(stage).arg("/source");
     command.arg("--bind").arg(socket_dir).arg("/socket");
     command.args(DAEMON_OPTIONS);
+    command.arg("--cache").arg(binding.cache.as_str());
     if binding.read_only {
         command.arg("--readonly");
     }

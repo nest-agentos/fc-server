@@ -97,6 +97,8 @@ pub struct Binding {
     pub backend: Backend,
     #[serde(default)]
     pub size_mib: u32,
+    #[serde(default)]
+    pub cache: VirtiofsCache,
     #[serde(skip)]
     pub source_fd: Option<std::sync::Arc<std::fs::File>>,
 }
@@ -107,6 +109,23 @@ pub enum Backend {
     #[default]
     Block,
     Virtiofs,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VirtiofsCache {
+    #[default]
+    Never,
+    Auto,
+}
+
+impl VirtiofsCache {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::Auto => "auto",
+        }
+    }
 }
 
 pub fn valid_id(id: &str) -> bool {
@@ -233,6 +252,7 @@ impl Binding {
         );
         match self.backend {
             Backend::Block => {
+                ensure!(self.cache == VirtiofsCache::Never, "cache applies only to virtiofs bindings");
                 ensure!((64..=65536).contains(&self.size_mib), "binding size must be 64..65536 MiB")
             }
             Backend::Virtiofs => {

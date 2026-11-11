@@ -21,6 +21,24 @@ use tower::ServiceExt;
 const KEY: &str = "test-key-with-at-least-thirty-two-characters";
 
 #[test]
+fn mmap_cache_policy_is_explicit_and_limited_to_virtiofs() {
+    use firecracker_server::config::{Backend, VirtiofsCache};
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = config(dir.path());
+    assert_eq!(c.bindings["project"].cache.as_str(), "never");
+    c.bindings.get_mut("project").unwrap().cache = VirtiofsCache::Auto;
+    assert!(c.validate().unwrap_err().to_string().contains("cache applies only"));
+    let binding = c.bindings.get_mut("project").unwrap();
+    binding.backend = Backend::Virtiofs;
+    binding.size_mib = 0;
+    c.virtiofsd = Some("/usr/libexec/virtiofsd".into());
+    c.validate().unwrap();
+    assert_eq!(c.bindings["project"].cache.as_str(), "auto");
+    assert!(toml::from_str::<firecracker_server::config::Binding>(
+        "source='/p'\ntarget='/p'\nread_only=false\ncache='always'").is_err());
+}
+
+#[test]
 fn shared_root_requires_initrd_and_keeps_base_read_only() {
     use firecracker_server::config::RootfsMode;
     let dir = tempfile::tempdir().unwrap();

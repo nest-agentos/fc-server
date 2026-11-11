@@ -28,6 +28,8 @@ bindings = ["project", "codex", "claude", "dsh"]
 
 [bindings.project]
 backend = "virtiofs"
+# auto supports shared mmap (for example Chrome ICU); never preserves uncached file I/O.
+# cache = "auto"
 source = "/srv/harness/project"
 target = "/workspace/project"
 read_only = false
