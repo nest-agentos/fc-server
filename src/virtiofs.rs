@@ -46,6 +46,7 @@ const RUNTIME_MOUNTS: &[&str] = &[
     "--tmpfs",
     "/tmp",
 ];
+// Use virtiofsd's adaptive FD budget; inode caching also consumes guest slots.
 const DAEMON_OPTIONS: &[&str] = &[
     "--",
     "/virtiofsd",
@@ -58,8 +59,6 @@ const DAEMON_OPTIONS: &[&str] = &[
     "--seccomp",
     "kill",
     "--inode-file-handles=never",
-    "--rlimit-nofile",
-    "65536",
     "--thread-pool-size",
     "4",
     "--modcaps=-mknod",

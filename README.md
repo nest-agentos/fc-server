@@ -123,6 +123,8 @@ REBUILD_IMAGE=1 IMAGE_SIZE_MIB=8192 ./vmm.sh build --os
 
 安装位置为 `/usr/local/bin/firecracker-server`、`/usr/local/libexec/fc-hp/`、`/var/lib/mindos-images/`、`/var/lib/mindos-firecracker/`、`/etc/mindos-firecracker/` 和 systemd unit。首次安装生成 0600 的配置和随机 API key，后续安装保留它们。默认授权 `/srv/harness/project` 直通，Codex/Claude/DSH 的配置和 session 使用各自的持久块卷；新建目录归 guest 的 1000:1000 所有，可在配置中改为实际授权目录。未执行 `network` 时默认无网卡。
 
+目录扫描也会占用 virtiofsd 的 guest FD 预算；保留 daemon 自带的预算选择机制（默认目标 1,000,000，受宿主限制约束），不再将其固定为 65536。仅调整运行进程的 rlimit 不会更新启动时建立的内部预算；安装服务后需重启 VM，让共享目录连接使用新预算。
+
 ## 多 VM 共享基础镜像的物理内存
 
 `rootfs_mode = "shared"` 通过 **virtio-pmem + ext4 DAX + OverlayFS** 启动。所有 VM 的 `base.ext4` 是同一个宿主 inode 的硬链接，以 `MAP_SHARED/PROT_READ` 映射并设置 KVM 只读内存槽。guest 将基础层挂为 `ro,noload,dax=always`，把各自的私有 ext4 盘作为 OverlayFS upper/work。现有 virtio-fs 项目目录可以同时使用，无需修改其 daemon 或开启 FUSE_DAX。
