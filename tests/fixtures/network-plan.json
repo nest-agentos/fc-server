@@ -9,7 +9,7 @@
   "slots": [
     {
       "index": 0,
-      "namespace": "mindos-fc-0",
+      "namespace": "nestos-fc-0",
       "tap": "fc-tap",
       "host_interface": "mfc-h0",
       "peer_interface": "mfc-n0",

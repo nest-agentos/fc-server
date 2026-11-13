@@ -12,20 +12,20 @@ import tomllib
 SPEC = spec_from_file_location('installer', Path(__file__).with_name('install-environment.py'))
 installer = module_from_spec(SPEC)
 SPEC.loader.exec_module(installer)
-CONFIG = Path('/etc/mindos-firecracker/config.toml')
+CONFIG = Path('/etc/nestos-firecracker/config.toml')
 
 
 def updated(text, name):
     data = tomllib.loads(text)
     profile = data['profiles'][name]
-    if profile['rootfs'] != '/var/lib/mindos-images/debian13.ext4':
+    if profile['rootfs'] != '/var/lib/nestos-images/debian13.ext4':
         raise RuntimeError('shared-root command requires the built-in Debian image path')
-    if profile['kernel'] != '/var/lib/mindos-images/vmlinux':
+    if profile['kernel'] != '/var/lib/nestos-images/vmlinux':
         raise RuntimeError('shared-root command requires the built-in PMEM/DAX kernel')
     pattern = rf'(?m)(^\[profiles\.{re.escape(name)}\]\s*\n)([\s\S]*?)(?=^\[|\Z)'
     def replace(match):
         body = re.sub(r'(?m)^\s*(rootfs_mode|initrd|upper_size_mib)\s*=.*\n?', '', match[2])
-        options = 'rootfs_mode = "shared"\ninitrd = "/var/lib/mindos-images/debian13.ext4.initrd"\n'
+        options = 'rootfs_mode = "shared"\ninitrd = "/var/lib/nestos-images/debian13.ext4.initrd"\n'
         options += f'upper_size_mib = {profile.get("upper_size_mib", 2048)}\n'
         return match[1] + options + body
     result, count = re.subn(pattern, replace, text)
@@ -37,7 +37,7 @@ def updated(text, name):
 
 def enable(name):
     installer.trusted(CONFIG)
-    initrd = Path('/var/lib/mindos-images/debian13.ext4.initrd')
+    initrd = Path('/var/lib/nestos-images/debian13.ext4.initrd')
     installer.trusted(initrd)
     base = initrd.with_suffix('')
     installer.trusted(base)
@@ -55,7 +55,7 @@ def enable(name):
 if __name__ == '__main__':
     if os.geteuid() != 0:
         raise SystemExit('shared-root configuration requires root')
-    with open('/run/mindos-firecracker.lock', 'a') as lock:
+    with open('/run/nestos-firecracker.lock', 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if subprocess.run(['systemctl', 'is-active', '--quiet', 'firecracker-server']).returncode == 0:
             raise RuntimeError('stop firecracker-server before changing shared-root configuration')

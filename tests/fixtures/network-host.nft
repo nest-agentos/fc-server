@@ -1,4 +1,4 @@
-table inet mindos_firecracker {
+table inet nestos_firecracker {
 set blocked { type ipv4_addr; flags interval; elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4 }; }
 set proxy_peers { type ifname . ipv4_addr . ipv4_addr . inet_service; }
 set published_marks { type mark; }
@@ -26,7 +26,7 @@ iifname "mfc-h*" drop
 oifname "mfc-h*" drop
 }
 }
-table ip mindos_firecracker_nat {
+table ip nestos_firecracker_nat {
 chain published_prerouting { }
 chain published_output { }
 chain published_snat { }

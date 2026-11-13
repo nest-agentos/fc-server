@@ -14,6 +14,7 @@ No command: show this help.
   deps     Install Debian/Ubuntu host dependencies and rustup if missing.
   install  Deploy built artifacts, initial config, key and systemd unit as root.
   install-server  Build/deploy only server and host helpers; preserve all VM images/config.
+  migrate [--apply]  Migrate installed MindOS-era paths to NestOS (dry run by default).
   setup [--os]  Run deps, build, install, check. First installation needs --os.
   network [--os]  Prepare SSH/NAT/DHCP/DNS, deploy, restart an idle server; --os updates guest OS.
   shared-root [--os]  Deploy shared-root mode; --os builds guest OS, otherwise reuse existing assets.
@@ -26,7 +27,7 @@ No command: show this help.
   start ID [DIRECTORY...]  Create a debian13 VM, optionally with authorized directory bindings.
   stop ID  Stop a VM; persistent roots/volumes are retained, temporary root disks deleted.
   reboot ID  Restart a managed service VM, or recreate an ordinary VM and restore its ports.
-  update ID  Update a managed service from /etc sources using ~/.ssh/mindos-firecracker.
+  update ID  Update a managed service from /etc sources using ~/.ssh/nestos-firecracker.
   service <update|install|setup|start|up|stop|destroy|status> ...  Manage generic guest services.
   service update ID [FILE --identity KEY] [--enable]  Resolve source by service binding; retain sessions/root.
   environment <check|up|apply> FILE.yaml  Provision a user environment from one private YAML.
@@ -47,7 +48,7 @@ Environment:
   GUEST_FLAVOR       harness (pinned Codex/Claude Code/DSH) or base (no Node/tools).
   NPM_REGISTRY       Registry used in the build stage; npm is absent at runtime.
   NODE_IMAGE         Pinned Node build image (default: node:26.13.0-trixie-slim).
-  SSH_PUBLIC_KEY     Guest authorized public key (auto: ~/.ssh/mindos-firecracker.pub).
+  SSH_PUBLIC_KEY     Guest authorized public key (auto: ~/.ssh/nestos-firecracker.pub).
   FC_EGRESS_INTERFACE, FC_DNS_SERVERS  Optional NAT interface/public DNS overrides.
   REBUILD_IMAGE=1    With --os, force rebuilding the Debian image.
   DEBIAN_MIRROR, DEBIAN_SECURITY_MIRROR  Optional guest APT mirrors.
@@ -350,7 +351,7 @@ network_setup() {
     stage=network-preflight
     host_cli network idle
     need ssh-keygen
-    local identity=${SSH_IDENTITY:-$HOME/.ssh/mindos-firecracker}
+    local identity=${SSH_IDENTITY:-$HOME/.ssh/nestos-firecracker}
     if [[ ! -f $identity ]]; then
         (umask 077; mkdir -p -- "$(dirname -- "$identity")")
         ssh-keygen -q -t ed25519 -N '' -f "$identity"
@@ -363,8 +364,8 @@ network_setup() {
     as_root systemctl stop firecracker-server
     deploy
     as_root python3 "$root/scripts/install-network.py" install
-    as_root systemctl enable --now mindos-firecracker-network.service
-    as_root systemctl restart mindos-firecracker-network.service
+    as_root systemctl enable --now nestos-firecracker-network.service
+    as_root systemctl restart nestos-firecracker-network.service
     as_root systemctl enable --now firecracker-server
     log 'result=success; create a VM, then ./vmm.sh ssh VM_ID'
 }
@@ -389,8 +390,8 @@ ssh_vm() {
     shift
     local address alias
     read -r address alias < <(host_cli network address "$vm")
-    ssh -F /dev/null -i "${SSH_IDENTITY:-$HOME/.ssh/mindos-firecracker}" \
-        -o "UserKnownHostsFile=$HOME/.ssh/mindos-firecracker-known-hosts" \
+    ssh -F /dev/null -i "${SSH_IDENTITY:-$HOME/.ssh/nestos-firecracker}" \
+        -o "UserKnownHostsFile=$HOME/.ssh/nestos-firecracker-known-hosts" \
         -o "HostKeyAlias=$alias" -o StrictHostKeyChecking=accept-new \
         -o ConnectTimeout=3 -o ConnectionAttempts=20 -o IdentitiesOnly=yes -o ForwardAgent=no \
         "agent@$address" "$@"
@@ -426,6 +427,7 @@ case ${1:-help} in
     deps) init; dependencies ;;
     install) init; deploy ;;
     install-server) init; deploy_server ;;
+    migrate) init; as_root python3 "$root/scripts/migrate-to-nestos.py" "${@:2}" ;;
     setup) validate_build_options "${@:2}"; init; require_os_assets "${@:2}"; dependencies; build_all "${@:2}"; deploy; check_host ;;
     network) validate_build_options "${@:2}"; init; require_os_assets "${@:2}"; network_setup "${@:2}" ;;
     shared-root) validate_build_options "${@:2}"; init; require_os_assets "${@:2}"; shared_root_setup "${@:2}" ;;

@@ -12,11 +12,11 @@ import tomllib
 import urllib.error
 import urllib.request
 
-CONFIG = Path('/etc/mindos-firecracker/config.toml')
+CONFIG = Path('/etc/nestos-firecracker/config.toml')
 PLAN = CONFIG.with_name('network.json')
-RUNTIME = Path('/run/mindos-firecracker-network')
+RUNTIME = Path('/run/nestos-firecracker-network')
 STATE = RUNTIME / 'state.json'
-INSTALL = Path('/usr/local/libexec/mindos-firecracker')
+INSTALL = Path('/usr/local/libexec/nestos-firecracker')
 BLOCKED = ('0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
            '169.254.0.0/16', '172.16.0.0/12', '192.0.0.0/24', '192.0.2.0/24',
            '192.168.0.0/16', '198.18.0.0/15', '198.51.100.0/24', '203.0.113.0/24',
@@ -69,7 +69,7 @@ def require_empty():
 def slot(index, guest, uplink):
     g = ipaddress.ip_network(f'{guest.network_address + index * 256}/30')
     u = ipaddress.ip_network(f'{uplink.network_address + index * 256}/30')
-    return {'index': index, 'namespace': f'mindos-fc-{index}', 'tap': 'fc-tap',
+    return {'index': index, 'namespace': f'nestos-fc-{index}', 'tap': 'fc-tap',
             'host_interface': f'mfc-h{index}', 'peer_interface': f'mfc-n{index}',
             'guest_subnet': str(g), 'uplink_subnet': str(u),
             'guest_ip': str(g[2]), 'gateway': str(g[1]),
@@ -151,17 +151,17 @@ def install():
     installer.directory(INSTALL)
     save(PLAN, plan)
     install_dns(plan)
-    save(Path('/etc/sysctl.d/90-mindos-firecracker.conf'), 'net.ipv4.ip_forward=1\n', 0o644)
-    dns_units = ' '.join(f'mindos-firecracker-dns@{item["index"]}.service' for item in plan['slots'])
-    unit = f'[Unit]\nDescription=MindOS microVM network namespaces\nWants=network-online.target {dns_units}\n'
+    save(Path('/etc/sysctl.d/90-nestos-firecracker.conf'), 'net.ipv4.ip_forward=1\n', 0o644)
+    dns_units = ' '.join(f'nestos-firecracker-dns@{item["index"]}.service' for item in plan['slots'])
+    unit = f'[Unit]\nDescription=NestOS microVM network namespaces\nWants=network-online.target {dns_units}\n'
     unit += 'After=network-online.target\nBefore=firecracker-server.service\n[Service]\nType=oneshot\n'
     unit += 'RemainAfterExit=yes\nUMask=0077\nTimeoutStopSec=30\n'
     unit += 'ExecStart=/usr/local/bin/firecracker-server network up\nExecStop=/usr/local/bin/firecracker-server network down\n'
     unit += '[Install]\nWantedBy=multi-user.target\n'
-    save(Path('/etc/systemd/system/mindos-firecracker-network.service'), unit, 0o644)
+    save(Path('/etc/systemd/system/nestos-firecracker-network.service'), unit, 0o644)
     dropin = Path('/etc/systemd/system/firecracker-server.service.d')
     installer.directory(dropin)
-    save(dropin / 'network.conf', f'[Unit]\nRequires=mindos-firecracker-network.service {dns_units}\nAfter=mindos-firecracker-network.service {dns_units}\n', 0o644)
+    save(dropin / 'network.conf', f'[Unit]\nRequires=nestos-firecracker-network.service {dns_units}\nAfter=nestos-firecracker-network.service {dns_units}\n', 0o644)
     run('/usr/bin/systemctl', 'daemon-reload')
     print(json.dumps({'network': 'installed', 'slots': len(plan['slots']), 'egress': plan['egress_interface']}))
 
@@ -187,12 +187,12 @@ def install_dns(plan):
                    f'dhcp-option=option:dns-server,{item["gateway"]}']
         options += ['server=' + server for server in plan['dns_servers']]
         save(directory / f'dns-{item["index"]}.conf', '\n'.join(options) + '\n')
-    unit = '[Unit]\nDescription=MindOS DHCP/DNS for VM slot %i\n'
-    unit += 'Requires=mindos-firecracker-network.service\nAfter=mindos-firecracker-network.service\n'
-    unit += 'PartOf=mindos-firecracker-network.service\nBefore=firecracker-server.service\n'
+    unit = '[Unit]\nDescription=NestOS DHCP/DNS for VM slot %i\n'
+    unit += 'Requires=nestos-firecracker-network.service\nAfter=nestos-firecracker-network.service\n'
+    unit += 'PartOf=nestos-firecracker-network.service\nBefore=firecracker-server.service\n'
     unit += '[Service]\nType=simple\nRestart=on-failure\nRestartSec=1\n'
-    unit += f'ExecStart=/usr/sbin/ip netns exec mindos-fc-%i /usr/sbin/dnsmasq --keep-in-foreground --conf-file={directory}/dns-%i.conf\n'
-    save(Path('/etc/systemd/system/mindos-firecracker-dns@.service'), unit, 0o644)
+    unit += f'ExecStart=/usr/sbin/ip netns exec nestos-fc-%i /usr/sbin/dnsmasq --keep-in-foreground --conf-file={directory}/dns-%i.conf\n'
+    save(Path('/etc/systemd/system/nestos-firecracker-dns@.service'), unit, 0o644)
 
 
 def connection(vm):

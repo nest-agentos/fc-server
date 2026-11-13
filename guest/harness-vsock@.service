@@ -1,7 +1,7 @@
 [Unit]
 Description=Native harness vsock port %i
-Requires=mindos-bindings.service
-After=mindos-bindings.service
+Requires=nestos-bindings.service
+After=nestos-bindings.service
 
 [Service]
 User=agent

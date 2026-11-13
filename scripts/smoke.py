@@ -122,7 +122,7 @@ def exercise(binary, address, key, env, vm):
     request(address, key, "POST", "/v1/vms", spec)
     assert request(address, key, "POST", "/v1/vms", spec)["id"] == vm
     request(address, key, "POST", f"/v1/vms/{vm}/connect/7001", expected=403,
-            extra_headers={"Connection": "upgrade", "Upgrade": "mindos-vsock"})
+            extra_headers={"Connection": "upgrade", "Upgrade": "nestos-vsock"})
     request(address, key, "POST", "/v1/vms", {**spec, "id": vm + "-busy"}, 409)
     command = "grep -q '^VERSION_ID=\"13\"' /etc/os-release && test $(id -u) = 1000 && "
     command += "test -r /workspace/project/probe && printf durable > /workspace/project/marker && "
@@ -149,7 +149,7 @@ def export_disk(address, key):
 
 def crash_check(address, key, process_id, spec):
     request(address, key, "POST", "/v1/vms", spec)
-    group = Path("/sys/fs/cgroup/mindos-firecracker") / spec["id"]
+    group = Path("/sys/fs/cgroup/nestos-firecracker") / spec["id"]
     assert group_processes(group), "VMM not in the resource cgroup"
     sudo("kill", "-KILL", process_id)
     deadline = time.monotonic() + 10
@@ -183,7 +183,7 @@ def cleanup(process, root, vm):
             process.wait(timeout=30)
         except subprocess.TimeoutExpired:
             raise RuntimeError("server did not stop; leaving test artifacts for inspection")
-    group = Path("/sys/fs/cgroup/mindos-firecracker") / vm
+    group = Path("/sys/fs/cgroup/nestos-firecracker") / vm
     if root_exists(group):
         assert not group_processes(group), "refusing to delete a live VM"
         sudo("rmdir", group)

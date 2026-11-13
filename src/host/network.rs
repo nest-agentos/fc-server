@@ -8,8 +8,8 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-pub const RUNTIME: &str = "/run/mindos-firecracker-network";
-pub const PLAN: &str = "/etc/mindos-firecracker/network.json";
+pub const RUNTIME: &str = "/run/nestos-firecracker-network";
+pub const PLAN: &str = "/etc/nestos-firecracker/network.json";
 pub const BLOCKED: &str = "0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -109,7 +109,7 @@ pub fn connection(host: &Host, id: &str) -> Result<(Slot, String)> {
         .modified()?
         .duration_since(UNIX_EPOCH)?
         .as_nanos();
-    Ok((item, format!("mindos-{id}-{generation}")))
+    Ok((item, format!("nestos-{id}-{generation}")))
 }
 
 pub fn empty(host: &Host) -> Result<()> {
@@ -143,7 +143,7 @@ fn blocked_set() -> String {
 }
 
 pub fn host_rules(plan: &Plan) -> String {
-    let mut s = format!("table inet mindos_firecracker {{\n{}set proxy_peers {{ type ifname . ipv4_addr . ipv4_addr . inet_service; }}\nset published_marks {{ type mark; }}\n", blocked_set());
+    let mut s = format!("table inet nestos_firecracker {{\n{}set proxy_peers {{ type ifname . ipv4_addr . ipv4_addr . inet_service; }}\nset published_marks {{ type mark; }}\n", blocked_set());
     s += "chain published_guard { ct mark @published_marks ct status dnat accept\nct mark & 0xff000000 == 0xfc000000 drop\n}\nchain published_forward { }\n";
     s += "chain output { type filter hook output priority 0; policy accept; oifname \"mfc-h*\" jump published_guard\n}\n";
     s += "chain input { type filter hook input priority -20; policy accept;\niifname \"mfc-h*\" jump published_guard\niifname . ip saddr . ip daddr . tcp dport @proxy_peers accept\niifname \"mfc-h*\" ct state established,related accept\niifname \"mfc-h*\" drop\n}\n";
@@ -156,14 +156,14 @@ pub fn host_rules(plan: &Plan) -> String {
     }
     s += "iifname \"mfc-h*\" jump published_guard\noifname \"mfc-h*\" jump published_guard\niifname . ip saddr . ip daddr . tcp dport @proxy_peers accept\niifname \"mfc-h*\" ip daddr @blocked drop\n";
     s += &format!("iifname \"mfc-h*\" oifname \"{}\" meta nfproto ipv4 accept\niifname \"{}\" oifname \"mfc-h*\" ct state established,related accept\n",plan.egress_interface,plan.egress_interface);
-    s += "iifname \"mfc-h*\" drop\noifname \"mfc-h*\" drop\n}\n}\ntable ip mindos_firecracker_nat {\nchain published_prerouting { }\nchain published_output { }\nchain published_snat { }\n";
+    s += "iifname \"mfc-h*\" drop\noifname \"mfc-h*\" drop\n}\n}\ntable ip nestos_firecracker_nat {\nchain published_prerouting { }\nchain published_output { }\nchain published_snat { }\n";
     s += "chain prerouting { type nat hook prerouting priority dstnat; policy accept; iifname != \"mfc-h*\" jump published_prerouting\n}\nchain output { type nat hook output priority dstnat; policy accept; jump published_output\n}\nchain postrouting { type nat hook postrouting priority srcnat; policy accept; jump published_snat\n";
     s += &format!("iifname \"mfc-h*\" oifname \"{}\" masquerade\n}}\n}}\n", plan.egress_interface);
     s
 }
 
 pub fn namespace_rules(i: &Slot) -> String {
-    format!("table inet mindos_firecracker {{\n{}set proxy_targets {{ type ipv4_addr . inet_service; }}\nchain input {{ type filter hook input priority 0; policy drop;\niifname \"lo\" accept\nct state established,related accept\niifname \"{}\" udp dport 67 accept\niifname \"{}\" ip saddr {} ip daddr {} udp dport 53 accept\niifname \"{}\" ip saddr {} ip daddr {} tcp dport 53 accept\niifname \"{}\" ip daddr {} icmp type echo-request accept\n}}\nchain published_forward {{ }}\nchain forward {{ type filter hook forward priority 0; policy drop;\niifname \"{}\" ip saddr != {} drop\nct state established,related accept\njump published_forward\niifname \"{}\" ip daddr . tcp dport @proxy_targets accept\niifname \"{}\" ip saddr {} ip daddr {} tcp dport 22 accept\niifname \"{}\" ip daddr @blocked drop\niifname \"{}\" oifname \"{}\" ip saddr {} accept\n}}\n}}\n",blocked_set(),i.tap,i.tap,i.guest_ip,i.gateway,i.tap,i.guest_ip,i.gateway,i.tap,i.gateway,i.tap,i.guest_ip,i.tap,i.peer_interface,i.host_ip,i.guest_ip,i.tap,i.tap,i.peer_interface,i.guest_ip)
+    format!("table inet nestos_firecracker {{\n{}set proxy_targets {{ type ipv4_addr . inet_service; }}\nchain input {{ type filter hook input priority 0; policy drop;\niifname \"lo\" accept\nct state established,related accept\niifname \"{}\" udp dport 67 accept\niifname \"{}\" ip saddr {} ip daddr {} udp dport 53 accept\niifname \"{}\" ip saddr {} ip daddr {} tcp dport 53 accept\niifname \"{}\" ip daddr {} icmp type echo-request accept\n}}\nchain published_forward {{ }}\nchain forward {{ type filter hook forward priority 0; policy drop;\niifname \"{}\" ip saddr != {} drop\nct state established,related accept\njump published_forward\niifname \"{}\" ip daddr . tcp dport @proxy_targets accept\niifname \"{}\" ip saddr {} ip daddr {} tcp dport 22 accept\niifname \"{}\" ip daddr @blocked drop\niifname \"{}\" oifname \"{}\" ip saddr {} accept\n}}\n}}\n",blocked_set(),i.tap,i.tap,i.guest_ip,i.gateway,i.tap,i.guest_ip,i.gateway,i.tap,i.gateway,i.tap,i.guest_ip,i.tap,i.peer_interface,i.host_ip,i.guest_ip,i.tap,i.tap,i.peer_interface,i.guest_ip)
 }
 
 fn sysctl(values: &[&str], ns: Option<&str>) -> Result<()> {
@@ -180,7 +180,7 @@ fn prepare(i: &Slot) -> Result<()> {
         None,
         true,
     )?;
-    run(&["link", "set", &i.host_interface, "alias", "mindos-firecracker-network"], None, true)?;
+    run(&["link", "set", &i.host_interface, "alias", "nestos-firecracker-network"], None, true)?;
     run(&["link", "set", &i.peer_interface, "netns", &i.namespace], None, true)?;
     run(&["address", "add", &format!("{}/30", i.host_ip), "dev", &i.host_interface], None, true)?;
     run(&["link", "set", &i.host_interface, "up"], None, true)?;
@@ -220,7 +220,7 @@ pub fn down(host: &Host) -> Result<()> {
         run(&["link", "delete", &i.host_interface], None, false)?;
         run(&["netns", "delete", &i.namespace], None, false)?;
     }
-    for (family, name) in [("inet", "mindos_firecracker"), ("ip", "mindos_firecracker_nat")] {
+    for (family, name) in [("inet", "nestos_firecracker"), ("ip", "nestos_firecracker_nat")] {
         common::command("/usr/sbin/nft", &["delete", "table", family, name], false)?;
     }
     std::fs::remove_file(state_path())?;
@@ -228,7 +228,7 @@ pub fn down(host: &Host) -> Result<()> {
 }
 
 fn unused(plan: &Plan) -> Result<()> {
-    for (family, name) in [("inet", "mindos_firecracker"), ("ip", "mindos_firecracker_nat")] {
+    for (family, name) in [("inet", "nestos_firecracker"), ("ip", "nestos_firecracker_nat")] {
         ensure!(
             !common::command("/usr/sbin/nft", &["list", "table", family, name], false)?
                 .status

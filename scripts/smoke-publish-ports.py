@@ -235,7 +235,7 @@ def clean_crashed_fixture(vm):
     import tomllib
     config = tomllib.loads(network.CONFIG.read_text())
     root = Path(config['state_dir']) / Path(config['firecracker']).name / vm
-    group = Path('/sys/fs/cgroup/mindos-firecracker') / vm
+    group = Path('/sys/fs/cgroup/nestos-firecracker') / vm
     if group.exists():
         assert 'populated 1' not in (group / 'cgroup.events').read_text(), 'fixture VMM survived server death'
         group.rmdir()
@@ -248,7 +248,7 @@ def crash_cycle(request, identity, hosts, vm, port, client):
     assert [row['id'] for row in rows] == [vm], 'refusing to interrupt unrelated VMs'
     call('systemctl', 'kill', '--kill-whom=main', '--signal=SIGKILL', 'firecracker-server')
     wait_stopped()
-    ledger = json.loads(Path('/run/mindos-firecracker-publish/ports.json').read_text())
+    ledger = json.loads(Path('/run/nestos-firecracker-publish/ports.json').read_text())
     assert ledger == {'records': []}, ledger
     denied(lambda: http('127.0.0.1', port))
     denied(lambda: udp('127.0.0.1', port, client))

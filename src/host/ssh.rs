@@ -147,7 +147,7 @@ pub fn wait_ready(host: &Host, vm: &str, identity: &Path, deadline: Instant) -> 
 }
 
 pub fn prepare_agent(host: &Host, vm: &str, identity: &Path, deadline: Instant) -> Result<()> {
-    let path = Path::new("/usr/local/libexec/mindos-firecracker/firecracker-guest");
+    let path = Path::new("/usr/local/libexec/nestos-firecracker/firecracker-guest");
     crate::config::trusted(path)?;
     let bytes = std::fs::read(path)?;
     let hash = format!("{:x}", Sha256::digest(&bytes));

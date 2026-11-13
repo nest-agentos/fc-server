@@ -79,15 +79,17 @@ def reserve_uids(base=200000, count=4):
 def main():
     if os.geteuid() != 0:
         raise RuntimeError("installation requires root")
+    if Path("/etc/mindos-firecracker").exists() and not Path("/etc/nestos-firecracker").exists():
+        raise RuntimeError("legacy MindOS installation detected; run ./vmm.sh migrate --apply first")
     build, repo = [Path(argument).resolve() for argument in sys.argv[1:3]]
     if sys.argv[3:] not in ([], ['--server-only']):
         raise RuntimeError('usage: install-environment.py BUILD REPO [--server-only]')
     # Holding the same lock as the server prevents replacement while it is running.
-    with open("/run/mindos-firecracker.lock", "a") as lock:
+    with open("/run/nestos-firecracker.lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if subprocess.run(["systemctl", "is-active", "--quiet", "firecracker-server"]).returncode == 0:
             raise RuntimeError("stop firecracker-server before installing")
-        config = Path("/etc/mindos-firecracker/config.toml")
+        config = Path("/etc/nestos-firecracker/config.toml")
         if sys.argv[3:] and not config.exists():
             raise RuntimeError('install-server requires an existing installation; run setup first')
         if config.exists():
@@ -105,11 +107,11 @@ def main():
 
 def install(build, repo):
     binaries = Path("/usr/local/libexec/fc-hp")
-    images = Path("/var/lib/mindos-images")
-    config = Path("/etc/mindos-firecracker")
+    images = Path("/var/lib/nestos-images")
+    config = Path("/etc/nestos-firecracker")
     for path in (Path("/usr/local/bin"), binaries, Path("/srv/harness")):
         directory(path)
-    for path in (images, config, Path("/var/lib/mindos-firecracker")):
+    for path in (images, config, Path("/var/lib/nestos-firecracker")):
         directory(path, 0o700)
     install_server(build, repo)
     for name in ("firecracker", "jailer", "virtiofsd"):
@@ -130,7 +132,7 @@ def install_server(build, repo):
     for name in ("firecracker-server", "firecracker-guest"):
         if not (build / "bin" / name).is_file():
             raise RuntimeError(f"missing runtime artifact: {name}")
-    helpers = Path('/usr/local/libexec/mindos-firecracker')
+    helpers = Path('/usr/local/libexec/nestos-firecracker')
     directory(helpers)
     atomic_file(Path('/usr/local/bin/firecracker-server'), 0o755,
                 source=build / 'bin/firecracker-server')
@@ -146,8 +148,8 @@ def install_server(build, repo):
     subprocess.run(["systemctl", "daemon-reload"], check=True)
 
 
-def migrate_runtime_paths(helpers, config=Path('/etc/mindos-firecracker/config.toml'),
-                          unit=Path('/etc/systemd/system/mindos-firecracker-network.service')):
+def migrate_runtime_paths(helpers, config=Path('/etc/nestos-firecracker/config.toml'),
+                          unit=Path('/etc/systemd/system/nestos-firecracker-network.service')):
     if config.exists():
         text = config.read_text()
         for name in ('publish-ports', 'proxy-egress'):

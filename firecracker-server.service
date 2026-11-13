@@ -1,15 +1,15 @@
 [Unit]
-Description=MindOS Firecracker isolation service
+Description=NestOS Firecracker isolation service
 After=network.target
 
 [Service]
 Type=notify
 NotifyAccess=main
 TimeoutStartSec=60
-EnvironmentFile=/etc/mindos-firecracker/environment
-ExecStart=/usr/local/bin/firecracker-server serve /etc/mindos-firecracker/config.toml
-ExecStopPost=/usr/local/libexec/mindos-firecracker/publish-ports reset
-ExecStopPost=/usr/local/libexec/mindos-firecracker/proxy-egress reset
+EnvironmentFile=/etc/nestos-firecracker/environment
+ExecStart=/usr/local/bin/firecracker-server serve /etc/nestos-firecracker/config.toml
+ExecStopPost=/usr/local/libexec/nestos-firecracker/publish-ports reset
+ExecStopPost=/usr/local/libexec/nestos-firecracker/proxy-egress reset
 KillMode=control-group
 TimeoutStopSec=120
 UMask=0077

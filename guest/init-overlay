@@ -19,9 +19,9 @@ mount -t ext4 -o ro,noload,dax=always /dev/pmem0 /lower
 mount -t ext4 -o rw,noatime /dev/vda /upper
 mkdir -p /upper/upper /upper/work
 mount -t overlay overlay -o lowerdir=/lower,upperdir=/upper/upper,workdir=/upper/work /newroot
-mkdir -p /newroot/.mindos/lower /newroot/.mindos/upper
-mount --move /lower /newroot/.mindos/lower
-mount --move /upper /newroot/.mindos/upper
+mkdir -p /newroot/.nestos/lower /newroot/.nestos/upper
+mount --move /lower /newroot/.nestos/lower
+mount --move /upper /newroot/.nestos/upper
 mount --move /dev /newroot/dev
 mount --move /proc /newroot/proc
 mount --move /sys /newroot/sys

@@ -2,15 +2,15 @@ listen = "127.0.0.1:8790"
 api_key_env = "FIRECRACKER_API_KEY"
 jailer = "/usr/local/bin/jailer"
 firecracker = "/usr/local/bin/firecracker"
-state_dir = "/var/lib/mindos-firecracker"
-port_publisher = "/usr/local/libexec/mindos-firecracker/publish-ports"
-proxy_egress = "/usr/local/libexec/mindos-firecracker/proxy-egress"
+state_dir = "/var/lib/nestos-firecracker"
+port_publisher = "/usr/local/libexec/nestos-firecracker/publish-ports"
+proxy_egress = "/usr/local/libexec/nestos-firecracker/proxy-egress"
 uid_base = 200000
 max_vms = 4
 
 [profiles.debian13]
-kernel = "/var/lib/mindos-images/vmlinux"
-rootfs = "/var/lib/mindos-images/debian13.ext4"
+kernel = "/var/lib/nestos-images/vmlinux"
+rootfs = "/var/lib/nestos-images/debian13.ext4"
 vcpus = 2
 memory_mib = 1024
 # Optional administrator ceilings; omitted ceilings equal the defaults above.

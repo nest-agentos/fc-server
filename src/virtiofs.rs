@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::process::{Child, Command};
 
-pub const CGROUP_ROOT: &str = "/sys/fs/cgroup/mindos-firecracker-fs";
+pub const CGROUP_ROOT: &str = "/sys/fs/cgroup/nestos-firecracker-fs";
 const NAMESPACE: &[&str] = &[
     "--die-with-parent",
     "--unshare-pid",

@@ -36,7 +36,7 @@ import shutil,sys
 shutil.copytree(sys.argv[1], sys.argv[2], ignore=shutil.ignore_patterns('node_modules', '__pycache__'))
 PY
 python3 "$script_dir/image-info.py" ssh-key > "$work/context/ssh-authorized-keys"
-"${docker_cmd[@]}" build --target "$flavor" --tag "mindos-firecracker-debian:13-$flavor" \
+"${docker_cmd[@]}" build --target "$flavor" --tag "nestos-firecracker-debian:13-$flavor" \
     --iidfile "$work/image-id" \
     --build-arg "DEBIAN_MIRROR=${DEBIAN_MIRROR:-http://deb.debian.org/debian}" \
     --build-arg "DEBIAN_SECURITY_MIRROR=${DEBIAN_SECURITY_MIRROR:-http://deb.debian.org/debian-security}" \

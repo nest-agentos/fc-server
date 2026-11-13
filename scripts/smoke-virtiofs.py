@@ -21,7 +21,7 @@ def root_write(path, data):
 
 def groups(vm):
     return [Path("/sys/fs/cgroup") / parent / vm
-            for parent in ["mindos-firecracker", "mindos-firecracker-fs"]]
+            for parent in ["nestos-firecracker", "nestos-firecracker-fs"]]
 
 
 def assert_empty(vm):
@@ -33,8 +33,8 @@ def assert_empty(vm):
 def add_root_probe(root, fixture):
     # Only the disposable test copy gets a root port for adversarial remount tests.
     unit = """[Unit]
-Requires=mindos-bindings.service
-After=mindos-bindings.service
+Requires=nestos-bindings.service
+After=nestos-bindings.service
 [Service]
 ExecStart=/usr/bin/socat VSOCK-LISTEN:7001,reuseaddr,fork EXEC:/usr/local/libexec/harness-7000
 [Install]

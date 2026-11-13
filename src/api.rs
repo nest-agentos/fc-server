@@ -211,7 +211,7 @@ async fn connect(
     Path((id, port)): Path<(String, u32)>,
     mut request: Request,
 ) -> Result<Response, Error> {
-    if request.headers().get(header::UPGRADE).and_then(|v| v.to_str().ok()) != Some("mindos-vsock")
+    if request.headers().get(header::UPGRADE).and_then(|v| v.to_str().ok()) != Some("nestos-vsock")
     {
         return Err(Error::new(StatusCode::BAD_REQUEST, "UPGRADE_REQUIRED", "tunnel_validate"));
     }
@@ -221,7 +221,7 @@ async fn connect(
     tokio::spawn(tunnel.run(hyper::upgrade::on(&mut request)));
     Ok((
         StatusCode::SWITCHING_PROTOCOLS,
-        [(header::CONNECTION, "upgrade"), (header::UPGRADE, "mindos-vsock")],
+        [(header::CONNECTION, "upgrade"), (header::UPGRADE, "nestos-vsock")],
     )
         .into_response())
 }

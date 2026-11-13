@@ -77,7 +77,7 @@ class Updates(unittest.TestCase):
 
     def default_paths(self):
         source=self.root/'service-sources'/'test'/'service.toml';source.parent.mkdir(parents=True);source.write_bytes(self.manifest.read_bytes())
-        identity=self.root/'.ssh/mindos-firecracker';identity.parent.mkdir();identity.write_bytes(self.key.read_bytes())
+        identity=self.root/'.ssh/nestos-firecracker';identity.parent.mkdir();identity.write_bytes(self.key.read_bytes())
         user=type('User',(),{'pw_dir':str(self.root)})()
         return source,identity,user
 

@@ -8,7 +8,7 @@ OS 构建现需显式 `--os`：默认 `build` 只构建 release 程序制品并�
 
 - YAML `vm.resources`、服务 manifest `[resources]` 与创建 VM API 支持可选 `vcpus` / `memory_mib`，缺省字段继承 profile；旧授权默认不变，管理员通过 `max_vcpus` / `max_memory_mib` 显式提高上限。请求随服务包保存，启动器使用同一有效 profile 配置 Firecracker 和两类 cgroup；列表展示有效资源。
 - 69 项 Rust 测试、Clippy（all-targets，warnings 为错误）、fmt、文档检查通过；核心性能回归 9 个文件 57 项及预算规则 6 项通过，临时作用域已清理。这些结果不代表完整浏览器页面性能验收。
-- 宿主私有 `/etc/mindos-firecracker/environments/cell-x1.yaml` 已声明 `memory_mib: 4096`；`services` 默认保持 1024 MiB，上限显式设为 4096 MiB。停止监督服务与管理服务后仅更新运行程序，使用 `environment up` 保留 Git 初始化状态；镜像与根盘未重建。
+- 宿主私有 `/etc/nestos-firecracker/environments/cell-x1.yaml` 已声明 `memory_mib: 4096`；`services` 默认保持 1024 MiB，上限显式设为 4096 MiB。停止监督服务与管理服务后仅更新运行程序，使用 `environment up` 保留 Git 初始化状态；镜像与根盘未重建。
 - 运行中的管理程序与新 release 二进制 SHA-256 一致。`cell-x1` 的管理状态为 2 vCPU / 4096 MiB、ready，guest `free -m` 总计 3938 MiB；VMM memory.max 为 6710886400 字节（含原共享根缓存额度），virtiofsd 为 4429185024 字节，两者 cpu.max 均为 `200000 100000`。根盘 inode 3839567、2 GiB 大小及 Git 配置摘要在扩容与再次 reboot 后一致，18787→8787/tcp、代理、enabled 状态保留。
 - 真实失败验证：未提高上限前 4096 MiB 的 check 被拒绝；提高上限后 8192 MiB 的 apply 在停机前以 `RESOURCE_MEMORY_NOT_AUTHORIZED` 拒绝，监督 runtime 记录不变。错误日志包含操作 ID、阶段、结果、分类和耗时，无凭据正文。临时 YAML 已移除，部署备份保留在宿主私有 `resource-upgrade-cell-x1-20261108` 目录。
 
@@ -18,7 +18,7 @@ OS 构建现需显式 `--os`：默认 `build` 只构建 release 程序制品并�
 
 在现有真实 KVM/网络环境上，仅更新管理程序、宿主辅助脚本及 systemd unit，没有重建或替换 Debian 镜像、内核或 fc-hp。Debian 镜像更新前后 inode 均为 `2924520`，SHA-256 均为 `c3f5fb4fdcb7387472f2c0c6c343698d29595bfd9ad638388a0947bd40b59c57`。
 
-新增通用服务包管理与显式持久根盘配置，服务命令、文件和环境均来自管理员安装的外部定义。实现及通用 Python HTTP 示例位于本仓库；cells 的实际服务定义和凭据仅保存在宿主私有 `/etc/mindos-firecracker/service-sources/cells-x1/`，核心没有 cells 分支。
+新增通用服务包管理与显式持久根盘配置，服务命令、文件和环境均来自管理员安装的外部定义。实现及通用 Python HTTP 示例位于本仓库；cells 的实际服务定义和凭据仅保存在宿主私有 `/etc/nestos-firecracker/service-sources/cells-x1/`，核心没有 cells 分支。
 
 - Rust `cargo test --locked` 共 26 项通过，覆盖有限/无限生命周期、持久 private/shared 根盘复用、lower/内核/initrd 固定、存储配置冲突、活动根盘禁止删除、路径校验及既有 API 边界。
 - 通用服务 Python 回归 17 项、部署回归 18 项、端口发布回归 10 项通过。覆盖 guest 文件投递、包快照、只读/相对路径约束、服务更新锁、同 ID 实例替换保护、命令退出、已有监听拒绝、SSH EOF 回收、上传超时及不完整事件不能阻塞超时。
@@ -77,7 +77,7 @@ HTTP/SSH 验收驱动和会创建测试子进程的回归均使用仓库 tempora
 | Rust virtiofsd | `2272d8bc4502b2abe2d6509b2bc0db6af8cd1cf02de9628fc883ef4ca6fcfd60` |
 | 仓库 VMM 补丁 | `4112acb7ae58bfd5283ec9006c235e274cdaa34e8b1393080719e199ed71664b` |
 
-Debian 制品位于 `/var/tmp/mindos-firecracker-debian13-clean.ext4`。基础镜像中的 Docker 标记必须在 export 后删除；否则 systemd 误判容器而跳过完整的 VM 卸载流程。`acpi=off` 下使用正常 reboot/i8042 reset 退出 VMM，不能依赖 poweroff/halt。
+Debian 制品位于 `/var/tmp/nestos-firecracker-debian13-clean.ext4`。基础镜像中的 Docker 标记必须在 export 后删除；否则 systemd 误判容器而跳过完整的 VM 卸载流程。`acpi=off` 下使用正常 reboot/i8042 reset 退出 VMM，不能依赖 poweroff/halt。
 
 ## 当前范围
 
@@ -143,7 +143,7 @@ Debian 制品位于 `/var/tmp/mindos-firecracker-debian13-clean.ext4`。基础�
 
 在用户启动的管理服务上配置 4 个独立网络槽位，guest 使用 `10.203.N.0/30`，veth 使用 `10.204.N.0/30`，通过 `enp1s0` 做 IPv4 NAT。每个 netns 独立运行 systemd 管理的 DHCP/DNS，使用宿主可达的公共 DNS。管理服务、网络与 DNS 单元均已配置开机依赖；未清空或修改 Docker 的现有防火墙表和原有 namespace。
 
-镜像加入 OpenSSH，仅允许 agent 公钥登录，专用私钥位于宿主用户的 `~/.ssh/mindos-firecracker`（0600），公钥由构建脚本注入，输入摘要记录公钥哈希。每个新根盘首次启动独立生成 SSH 主机密钥，客户端使用本次 VM 实例标识区分复用的 IP。根盘仍为 2147483648 bytes，新增 SSH 后 zstd 包为 466018848 bytes，记录见当前 `build/SHA256SUMS` 和 `debian13.ext4.json`。
+镜像加入 OpenSSH，仅允许 agent 公钥登录，专用私钥位于宿主用户的 `~/.ssh/nestos-firecracker`（0600），公钥由构建脚本注入，输入摘要记录公钥哈希。每个新根盘首次启动独立生成 SSH 主机密钥，客户端使用本次 VM 实例标识区分复用的 IP。根盘仍为 2147483648 bytes，新增 SSH 后 zstd 包为 466018848 bytes，记录见当前 `build/SHA256SUMS` 和 `debian13.ext4.json`。
 
 - `python3 scripts/test-build-environment.py`：15 项通过；新增私钥不可进入镜像、64 个槽位的地址/MAC 独立、loopback DNS 拒绝、宿主路由冲突拒绝。
 - nftables 两层规则经过 `nft --check` 校验并实际应用。SSH/PTY、DNS、公网 HTTPS 在两个临时 VM 上通过；两台 VM 的主机密钥不同。
@@ -164,7 +164,7 @@ Debian 制品位于 `/var/tmp/mindos-firecracker-debian13-clean.ext4`。基础�
 - 两 VM 的最终回归采样共同驻留 **180617216 bytes（172.25 MiB）**，对应 PFN 差异为 0。修改同一 `/home/agent/.bashrc` 后，各自读取到自己的内容；guest root 直接尝试写 `/dev/pmem0` 后，宿主基础镜像 SHA-256 保持不变。停止并重建 VM 后，私有修改消失。
 - 100 个 VM 全部正常关机回收。该测试验证基础系统、共享 mmap 和隔离；未运行 100 个并发 Codex/Claude/DSH 模型会话。guest 内核、堆、栈、普通 read 缓冲和 OverlayFS copy-up 仍独立占用资源；文件 copy-up 是整文件复制。
 - `cargo test --locked`：4 个库测试及 15 个边界测试通过。构建/部署 Python 回归 17 项通过，包含迁移幂等、保留网络配置、自定义镜像拒绝、100 槽位独立性。ShellCheck、Bash/Python 语法及真实 KVM 块卷、virtio-fs 完整回归通过。
-- 本机已通过 `./vmm.sh shared-root` 切换内置 profile，原配置备份到 `/etc/mindos-firecracker/config.before-shared-root.toml`；API key、目录绑定和 4 个网络槽位核对一致。服务保持启动并开机启用；日常并发上限仍为 4，程序支持配置到 128。
+- 本机已通过 `./vmm.sh shared-root` 切换内置 profile，原配置备份到 `/etc/nestos-firecracker/config.before-shared-root.toml`；API key、目录绑定和 4 个网络槽位核对一致。服务保持启动并开机启用；日常并发上限仍为 4，程序支持配置到 128。
 - 部署后的共享模式通过 SSH/PTY、不同主机密钥、DNS/HTTPS、宿主/私网/metadata/跨 VM 阻断验收；两个 VM 创建后约 2402 / 2405 ms 可执行 SSH 命令，随后正常回收。
 - 最后从已部署共享根盘经 SSH 执行镜像检查：Node v24.22.1、Codex 0.164.0、Claude Code 2.1.209、DSH 0.2.0-rc.2 均通过，版本探测约 7 / 65 / 186 / 80 ms。测试 VM 正常关闭，没有留下活动 VM。
 - 两 VM 组合验收同时挂载 PMEM 共享根盘、live virtio-fs 和独立 virtio-blk 持久卷；停止并重建后，根盘私有修改消失，持久卷中的 `durable` 标记保留。此项验证使用独立测试目录，没有读写生产绑定数据。
@@ -192,7 +192,7 @@ Debian 制品位于 `/var/tmp/mindos-firecracker-debian13-clean.ext4`。基础�
 
 ## 2026-11-07：Rust 运行期迁移与按 VM 代理
 
-宿主网络、端口发布、服务包安装/监督、列表和代理规则迁至 Rust；guest 使用静态链接的 `firecracker-guest`，通过 SSH 投递，不改基础镜像。删除旧运行期 Python 实现，构建/离线安装/诊断脚本保留 Python。升级备份位于 `/var/backups/mindos-firecracker/before-native-runtime/`，仅 root 可读。
+宿主网络、端口发布、服务包安装/监督、列表和代理规则迁至 Rust；guest 使用静态链接的 `firecracker-guest`，通过 SSH 投递，不改基础镜像。删除旧运行期 Python 实现，构建/离线安装/诊断脚本保留 Python。升级备份位于 `/var/backups/nestos-firecracker/before-native-runtime/`，仅 root 可读。
 
 - Rust 47 项测试通过；覆盖包快照、路径/凭据日志约束、代理授权和槽位规则、端口冲突、guest 进程组回收、控制 EOF、就绪超时及持久根盘。构建/安装回归 26 项通过，包含旧 helper 迁移幂等、配置备份、已知 pyc 清理和缺少静态 guest 制品时在修改系统前失败。`cargo clippy --all-targets -- -D warnings` 通过。
 - 实际安装后的辅助程序为 ELF，网络和工作负载 systemd unit 使用 Rust CLI，guest 监督进程为静态 ELF；已安装 helper 目录没有 Python 源文件或字节码。没有卸载 Python：业务服务和离线构建仍可自行使用它。

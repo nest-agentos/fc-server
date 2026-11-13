@@ -10,7 +10,7 @@ import sys
 
 def ssh_key():
     value = os.environ.get('SSH_PUBLIC_KEY')
-    path = Path(value) if value else Path.home() / '.ssh/mindos-firecracker.pub'
+    path = Path(value) if value else Path.home() / '.ssh/nestos-firecracker.pub'
     if value == '' or not path.exists():
         if value:
             raise FileNotFoundError(f'SSH public key unavailable: {path}')

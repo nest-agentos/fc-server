@@ -26,7 +26,7 @@ pub fn dispatch(args: &[String]) -> Result<()> {
             .into());
     }
     ensure!(unsafe { libc::geteuid() } == 0, "HOST_COMMAND_REQUIRES_ROOT");
-    let host = common::Host::load(Path::new("/etc/mindos-firecracker/config.toml"))?;
+    let host = common::Host::load(Path::new("/etc/nestos-firecracker/config.toml"))?;
     match args.first().map(String::as_str) {
         Some("list") => inventory::run(&host, &args[1..]),
         Some("service") => service::dispatch(&host, &args[1..]),

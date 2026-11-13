@@ -12,7 +12,7 @@ use std::{
     path::Path,
 };
 
-const ROOT: &str = "/run/mindos-firecracker-proxy";
+const ROOT: &str = "/run/nestos-firecracker-proxy";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct Record {
@@ -81,10 +81,10 @@ fn root_rules(records: &[Record], plan: &Plan) -> String {
                 .insert(format!("\"{}\" . {} . {} . {}", i.host_interface, i.guest_ip, ip, port));
         }
     }
-    let mut result = "flush set inet mindos_firecracker proxy_peers\n".to_owned();
+    let mut result = "flush set inet nestos_firecracker proxy_peers\n".to_owned();
     if !entries.is_empty() {
         result += &format!(
-            "add element inet mindos_firecracker proxy_peers {{ {} }}\n",
+            "add element inet nestos_firecracker proxy_peers {{ {} }}\n",
             entries.into_iter().collect::<Vec<_>>().join(", ")
         );
     }
@@ -97,10 +97,10 @@ fn namespace_rules(records: &[Record], index: usize) -> String {
         .filter(|r| r.slot == index)
         .flat_map(|r| r.targets.iter().map(|(a, p)| format!("{a} . {p}")))
         .collect();
-    let mut result = "flush set inet mindos_firecracker proxy_targets\n".to_owned();
+    let mut result = "flush set inet nestos_firecracker proxy_targets\n".to_owned();
     if !entries.is_empty() {
         result += &format!(
-            "add element inet mindos_firecracker proxy_targets {{ {} }}\n",
+            "add element inet nestos_firecracker proxy_targets {{ {} }}\n",
             entries.into_iter().collect::<Vec<_>>().join(", ")
         );
     }
@@ -153,7 +153,7 @@ fn transaction(old: &[Record], desired: &[Record], plan: &Plan, path: &Path) -> 
     })();
     if result.is_err() {
         if apply(old, plan, &indices).is_err() {
-            common::nft("flush set inet mindos_firecracker proxy_peers\n", None)?;
+            common::nft("flush set inet nestos_firecracker proxy_peers\n", None)?;
             anyhow::bail!("PROXY_ROLLBACK_FAILED");
         }
         common::save(path, &Ledger { records: old.to_vec(), rollback: None })?;
@@ -175,7 +175,7 @@ pub fn execute(value: &Value) -> Result<()> {
     ensure!(
         common::command(
             "/usr/sbin/nft",
-            &["list", "set", "inet", "mindos_firecracker", "proxy_peers"],
+            &["list", "set", "inet", "nestos_firecracker", "proxy_peers"],
             false
         )?
         .status
@@ -252,7 +252,7 @@ mod rule_tests {
         assert!(!rules.contains("mfc-h1"));
         assert_eq!(
             namespace_rules(std::slice::from_ref(&record), 1),
-            "flush set inet mindos_firecracker proxy_targets\n"
+            "flush set inet nestos_firecracker proxy_targets\n"
         );
         assert!(namespace_rules(&[record], 0).contains("10.204.0.1 . 7890"));
     }

@@ -58,7 +58,7 @@ class DeploymentTests(unittest.TestCase):
         targets = [str(call.args[0]) for call in write.call_args_list]
         self.assertIn('/usr/local/bin/firecracker-server', targets)
         self.assertIn('/etc/systemd/system/firecracker-workload@.service', targets)
-        self.assertFalse(any(path.startswith(('/var/lib/mindos-images/', '/etc/mindos-firecracker/'))
+        self.assertFalse(any(path.startswith(('/var/lib/nestos-images/', '/etc/nestos-firecracker/'))
                              for path in targets))
 
     def test_runtime_migration_preserves_business_config_and_removes_known_python_helpers(self):
@@ -261,7 +261,7 @@ class SharedRootTests(unittest.TestCase):
 
     def test_migration_rejects_custom_images(self):
         text = (REPO / 'config.virtiofs.example.toml').read_text()
-        text = text.replace('/var/lib/mindos-images/debian13.ext4', '/other.ext4')
+        text = text.replace('/var/lib/nestos-images/debian13.ext4', '/other.ext4')
         with self.assertRaisesRegex(RuntimeError, 'built-in Debian image'):
             shared_root.updated(text, 'debian13')
 

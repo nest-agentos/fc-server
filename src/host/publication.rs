@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeSet, net::Ipv4Addr, path::Path};
 
-const ROOT: &str = "/run/mindos-firecracker-publish";
+const ROOT: &str = "/run/nestos-firecracker-publish";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct Record {
@@ -40,7 +40,7 @@ fn guard() -> Result<()> {
     ensure!(
         common::command(
             "/usr/sbin/nft",
-            &["list", "set", "inet", "mindos_firecracker", "published_marks"],
+            &["list", "set", "inet", "nestos_firecracker", "published_marks"],
             false
         )?
         .status
@@ -51,13 +51,13 @@ fn guard() -> Result<()> {
 }
 
 fn root_rules(records: &[Record], plan: &Plan) -> String {
-    let mut s = "flush set inet mindos_firecracker published_marks\n".to_owned();
+    let mut s = "flush set inet nestos_firecracker published_marks\n".to_owned();
     for chain in ["published_output", "published_prerouting", "published_snat"] {
-        s += &format!("flush chain ip mindos_firecracker_nat {chain}\n");
+        s += &format!("flush chain ip nestos_firecracker_nat {chain}\n");
     }
     if !records.is_empty() {
         s += &format!(
-            "add element inet mindos_firecracker published_marks {{ {} }}\n",
+            "add element inet nestos_firecracker published_marks {{ {} }}\n",
             records.iter().map(|r| r.token.to_string()).collect::<Vec<_>>().join(", ")
         );
     }
@@ -73,24 +73,24 @@ fn root_rules(records: &[Record], plan: &Plan) -> String {
             "{target} {p} dport {} ct mark set {} dnat to {}:{}\n",
             r.host_port, r.token, i.guest_ip, r.guest_port
         );
-        s += &format!("add rule ip mindos_firecracker_nat published_output {action}");
+        s += &format!("add rule ip nestos_firecracker_nat published_output {action}");
         if !r.listen.is_loopback() {
-            s+=&format!("add rule ip mindos_firecracker_nat published_prerouting ip daddr != 127.0.0.0/8 {action}");
+            s+=&format!("add rule ip nestos_firecracker_nat published_prerouting ip daddr != 127.0.0.0/8 {action}");
         }
-        s+=&format!("add rule ip mindos_firecracker_nat published_snat ct mark {} oifname \"{}\" ip daddr {} {p} dport {} snat to {}\n",r.token,i.host_interface,i.guest_ip,r.guest_port,i.host_ip);
+        s+=&format!("add rule ip nestos_firecracker_nat published_snat ct mark {} oifname \"{}\" ip daddr {} {p} dport {} snat to {}\n",r.token,i.host_interface,i.guest_ip,r.guest_port,i.host_ip);
     }
     s
 }
 
 fn namespace_rules(records: &[Record], i: &Slot) -> String {
-    let mut s = "flush chain inet mindos_firecracker published_forward\n".to_owned();
+    let mut s = "flush chain inet nestos_firecracker published_forward\n".to_owned();
     let entries: BTreeSet<_> = records
         .iter()
         .filter(|r| r.slot == i.index)
         .map(|r| (protocol(r.protocol), r.guest_port))
         .collect();
     for (p, port) in entries {
-        s+=&format!("add rule inet mindos_firecracker published_forward iifname \"{}\" ip saddr {} ip daddr {} {p} dport {port} accept\n",i.peer_interface,i.host_ip,i.guest_ip);
+        s+=&format!("add rule inet nestos_firecracker published_forward iifname \"{}\" ip saddr {} ip daddr {} {p} dport {port} accept\n",i.peer_interface,i.host_ip,i.guest_ip);
     }
     s
 }
@@ -224,7 +224,7 @@ fn transaction(
             common::save(path, &Ledger { records: old.to_vec(), pending: None })
         })();
         if rollback.is_err() {
-            common::nft("flush set inet mindos_firecracker published_marks\n", None)?;
+            common::nft("flush set inet nestos_firecracker published_marks\n", None)?;
         }
     }
     result
@@ -366,7 +366,7 @@ mod tests {
             serde_json::from_str(include_str!("../../tests/fixtures/network-plan.json")).unwrap();
         let records = add(&[], &request("127.0.0.1", 0)).unwrap();
         let rules = root_rules(&records, &plan);
-        assert!(!rules.contains("add rule ip mindos_firecracker_nat published_prerouting"));
+        assert!(!rules.contains("add rule ip nestos_firecracker_nat published_prerouting"));
         let mut other = plan.slots[0].clone();
         other.index = 1;
         assert!(namespace_rules(&records, &other).lines().count() == 1);

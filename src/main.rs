@@ -66,7 +66,7 @@ fn initialize(path: &Path) -> Result<(Config, Vec<std::fs::File>, String)> {
     config.trusted_paths()?;
     ensure!(config.state_dir.is_dir(), "state_dir must be pre-created as root mode 0700");
     let locks = vec![
-        exclusive_lock(Path::new("/run/mindos-firecracker.lock"))?,
+        exclusive_lock(Path::new("/run/nestos-firecracker.lock"))?,
         exclusive_lock(&config.state_dir.join("server.lock"))?,
     ];
     initialize_state(&config)?;
@@ -98,7 +98,7 @@ fn initialize_state(config: &Config) -> Result<()> {
     ensure!(std::fs::read_dir(&instance_dir)?.next().is_none(), "stale jails found: inspect cgroups, stop orphan VMMs and remove jails before restarting; volumes remain reusable");
     std::fs::create_dir_all(config.state_dir.join("volumes"))?;
     for group in [
-        Path::new("/sys/fs/cgroup/mindos-firecracker"),
+        Path::new("/sys/fs/cgroup/nestos-firecracker"),
         Path::new(firecracker_server::virtiofs::CGROUP_ROOT),
     ] {
         if group.exists() {
@@ -186,7 +186,7 @@ async fn client(address: &str, id: &str, port: u32) -> Result<()> {
         .post(format!("{}/v1/vms/{id}/connect/{port}", address.trim_end_matches('/')))
         .bearer_auth(key)
         .header("Connection", "upgrade")
-        .header("Upgrade", "mindos-vsock")
+        .header("Upgrade", "nestos-vsock")
         .send()
         .await
         .context("connect request failed")?;

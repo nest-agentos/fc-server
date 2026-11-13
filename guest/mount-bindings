@@ -3,8 +3,8 @@ set -euo pipefail
 # The host emits only validated tokens. Never evaluate guest kernel arguments.
 for token in $(cat /proc/cmdline); do
     case "$token" in
-        mindos.mounts=*) type=ext4 ;;
-        mindos.virtiofs=*) type=virtiofs ;;
+        nestos.mounts=*) type=ext4 ;;
+        nestos.virtiofs=*) type=virtiofs ;;
         *) continue ;;
     esac
     IFS=, read -ra bindings <<< "${token#*=}"

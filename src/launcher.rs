@@ -33,7 +33,7 @@ pub fn machine(
     let mounts: Vec<_> = volumes.iter().map(|v| mount_token(config, &v.binding)).collect();
     let fs_mounts: Vec<_> = directories.iter().map(|name| mount_token(config, name)).collect();
     let mut machine = json!({
-        "boot-source":{"kernel_image_path":"/vmlinux", "boot_args":format!("console=ttyS0 reboot=k panic=1 pci=off acpi=off i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd root=/dev/vda rw init=/sbin/init mindos.mounts={} mindos.virtiofs={}", mounts.join(","), fs_mounts.join(","))},
+        "boot-source":{"kernel_image_path":"/vmlinux", "boot_args":format!("console=ttyS0 reboot=k panic=1 pci=off acpi=off i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd root=/dev/vda rw init=/sbin/init nestos.mounts={} nestos.virtiofs={}", mounts.join(","), fs_mounts.join(","))},
         "drives":drives, "machine-config":{"vcpu_count":profile.vcpus, "mem_size_mib":profile.memory_mib, "smt":false},
         "vsock":{"guest_cid":3, "uds_path":"/vsock.sock"}
     });
@@ -252,7 +252,7 @@ fn cgroup_limits(command: &mut Command, profile: &Profile, base: &Path) {
         0
     };
     command
-        .args(["--cgroup-version", "2", "--parent-cgroup", "mindos-firecracker", "--cgroup"])
+        .args(["--cgroup-version", "2", "--parent-cgroup", "nestos-firecracker", "--cgroup"])
         .arg(format!(
             "memory.max={}",
             (u64::from(profile.memory_mib) + 256) * 1024 * 1024 + shared_cache
@@ -305,7 +305,7 @@ pub async fn ready(
 }
 
 pub fn cgroup(id: &str) -> PathBuf {
-    PathBuf::from("/sys/fs/cgroup/mindos-firecracker").join(id)
+    PathBuf::from("/sys/fs/cgroup/nestos-firecracker").join(id)
 }
 
 pub async fn poweroff(config: &Config, id: &str, child: &mut Child) -> Result<bool, Error> {

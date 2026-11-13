@@ -32,7 +32,7 @@ for line in sections:
   selected=line.endswith('/usr/local/bin/node')
  if selected and line.startswith('VmFlags:'): flags=line.split()[1:]
 st=ctypes.create_string_buffer(256)
-assert ctypes.CDLL(None).statx(-100,b'/.mindos/lower/usr/local/bin/node',0,0xfff,st)==0
+assert ctypes.CDLL(None).statx(-100,b'/.nestos/lower/usr/local/bin/node',0,0xfff,st)==0
 dax=bool(struct.unpack_from('Q',st.raw,8)[0]&0x200000)
 json.dump(dict(pid=os.getpid(),bytes=len(m),statxDax=dax,privateMmapWriteIsolated=True,vmFlags=flags,checksum=checksum),open('/tmp/dax-probe.json','w'))
 time.sleep(1800)
@@ -148,7 +148,7 @@ def physical_evidence(root, vms):
     assert stats[0] == stats[1], 'base files must reference the very same inode'
     pids = []
     for vm in vms:
-        group = Path('/sys/fs/cgroup/mindos-firecracker') / vm
+        group = Path('/sys/fs/cgroup/nestos-firecracker') / vm
         candidates = smoke.group_processes(group).split()
         assert len(candidates) == 1, candidates
         pids.append(int(candidates[0]))
@@ -237,7 +237,7 @@ def main():
 def cleanup(process, root, vms):
     smoke.cleanup(process, root, vms[0])
     for vm in vms[1:]:
-        group = Path('/sys/fs/cgroup/mindos-firecracker') / vm
+        group = Path('/sys/fs/cgroup/nestos-firecracker') / vm
         if smoke.root_exists(group):
             assert not smoke.group_processes(group)
             smoke.sudo('rmdir', group)

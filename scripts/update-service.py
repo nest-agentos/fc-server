@@ -150,10 +150,10 @@ def expand_path(value):
     return Path(text).expanduser().resolve()
 
 
-def resolve_paths(server, vm, manifest=None, identity=None, source_root=Path('/etc/mindos-firecracker/service-sources')):
+def resolve_paths(server, vm, manifest=None, identity=None, source_root=Path('/etc/nestos-firecracker/service-sources')):
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,47}', vm):
         raise UpdateError('INVALID_VM_ID')
-    identity = expand_path(identity) if identity is not None else Path(invoking_user().pw_dir) / '.ssh/mindos-firecracker'
+    identity = expand_path(identity) if identity is not None else Path(invoking_user().pw_dir) / '.ssh/nestos-firecracker'
     if not identity.is_file():
         raise UpdateError('SERVICE_UPDATE_IDENTITY_MISSING_USE_IDENTITY')
     if manifest is None:
