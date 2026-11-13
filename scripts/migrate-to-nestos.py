@@ -8,7 +8,6 @@ Guest images built before the rename must be rebuilt: they still contain
 the old init script and systemd unit names.
 """
 import argparse
-import glob
 import os
 import pwd
 import shutil
@@ -37,7 +36,10 @@ FILE_PAIRS = [
 ]
 SSH_SUFFIXES = ('', '.pub', '-known-hosts')
 TEXT_SUFFIXES = {'.toml', '.json', '.yaml', '.yml', '.conf', '.env', '.service'}
-REPLACEMENTS = ((b'MINDOS', b'NESTOS'), (b'MindOS', b'NestOS'), (b'mindos', b'nestos'))
+REPLACEMENTS = (
+    (b'/etc/nestos-firecracker', b'/etc/nestos/firecracker'),
+    (b'MINDOS', b'NESTOS'), (b'MindOS', b'NestOS'), (b'mindos', b'nestos'),
+)
 
 
 def note(message):
@@ -60,9 +62,9 @@ def plan_pair(source, target):
 
 
 def stop_services(apply):
-    run(['systemctl', 'stop', 'firecracker-server'], apply)
-    for unit in glob.glob('/etc/systemd/system/mindos-firecracker-dns@*.service'):
-        run(['systemctl', 'stop', Path(unit).name], apply)
+    for unit in ('firecracker-server.service', 'firecracker-workload@*.service',
+                 'mindos-firecracker-dns@*.service'):
+        run(['systemctl', 'stop', unit], apply)
 
 
 def clear_network_state(apply):
@@ -109,7 +111,10 @@ def migrate(apply):
             moved.append(target)
             if apply:
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
-                os.rename(source, target)
+                try:
+                    os.rename(source, target)
+                except OSError:
+                    shutil.move(str(source), str(target))
 
     for home in dict.fromkeys((pwd.getpwuid(os.geteuid()).pw_dir,
                                pwd.getpwnam(os.environ['SUDO_USER']).pw_dir
@@ -125,7 +130,17 @@ def migrate(apply):
                 if apply:
                     os.rename(source, target)
 
-    for path in moved:
+    # Rewrite both moved targets and already-present targets (for example a
+    # config directory renamed ahead of the migration), plus fixed-name units.
+    targets = list(moved)
+    for source_name, target_name in [*DIRECTORY_PAIRS, *FILE_PAIRS]:
+        target, source = Path(target_name), Path(source_name)
+        if target.exists() and not source.exists():
+            targets.append(target)
+    unit_dir = Path('/etc/systemd/system')
+    if unit_dir.is_dir():
+        targets += sorted(unit_dir.glob('firecracker-*.service'))
+    for path in dict.fromkeys(targets):
         if path.is_dir():
             for child in path.rglob('*'):
                 if child.is_file() and rewrite(child):
