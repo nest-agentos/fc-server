@@ -25,7 +25,7 @@ def installed_config():
     spec = spec_from_file_location("installer", Path(__file__).with_name("install-environment.py"))
     installer = module_from_spec(spec)
     spec.loader.exec_module(installer)
-    config = Path("/etc/nestos-firecracker/config.toml")
+    config = Path("/etc/nestos/firecracker/config.toml")
     installer.trusted(config)
     data = tomllib.loads(config.read_text())
     paths = [config, Path("/usr/local/bin/firecracker-server"), Path(data["state_dir"])]
@@ -46,7 +46,7 @@ def installed_config():
     for binding in data.get("bindings", {}).values():
         path = Path(binding["source"])
         check(path.is_dir() and path.resolve() == path, f"canonical binding: {path}")
-    environment = Path("/etc/nestos-firecracker/environment")
+    environment = Path("/etc/nestos/firecracker/environment")
     installer.trusted(environment)
     check(environment.stat().st_mode & 0o777 == 0o600, "API key file permissions 0600")
     values = dict(line.split("=", 1) for line in environment.read_text().splitlines()

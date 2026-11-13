@@ -12,7 +12,7 @@ import tomllib
 import urllib.error
 import urllib.request
 
-CONFIG = Path('/etc/nestos-firecracker/config.toml')
+CONFIG = Path('/etc/nestos/firecracker/config.toml')
 PLAN = CONFIG.with_name('network.json')
 RUNTIME = Path('/run/nestos-firecracker-network')
 STATE = RUNTIME / 'state.json'

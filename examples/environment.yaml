@@ -10,7 +10,7 @@ rootfs:
   persistent: true
   user: agent
 service:
-  manifest: /etc/nestos-firecracker/service-sources/cells-x1/service.toml
+  manifest: /etc/nestos/firecracker/service-sources/cells-x1/service.toml
   identity_file: /home/li/.ssh/nestos-firecracker
 git:
   user:

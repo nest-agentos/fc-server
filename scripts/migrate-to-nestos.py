@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 DIRECTORY_PAIRS = [
-    ('/etc/mindos-firecracker', '/etc/nestos-firecracker'),
+    ('/etc/mindos-firecracker', '/etc/nestos/firecracker'),
     ('/var/lib/mindos-firecracker', '/var/lib/nestos-firecracker'),
     ('/var/lib/mindos-images', '/var/lib/nestos-images'),
     ('/usr/local/libexec/mindos-firecracker', '/usr/local/libexec/nestos-firecracker'),
@@ -108,7 +108,7 @@ def migrate(apply):
             note(f'rename {source} -> {target}')
             moved.append(target)
             if apply:
-                target.parent.mkdir(parents=True, exist_ok=True)
+                target.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
                 os.rename(source, target)
 
     for home in dict.fromkeys((pwd.getpwuid(os.geteuid()).pw_dir,

@@ -55,7 +55,7 @@ cd ~/share/prj/x1/tools/fc-server
 ./vmm.sh network          # 重建网络单元、nftables 表和命名空间
 ```
 
-迁移会移动 `/etc/mindos-firecracker`、`/var/lib/mindos-firecracker`、`/var/lib/mindos-images` 等目录，同步改写配置与 systemd 单元中的旧路径，并把管理 SSH 身份从 `~/.ssh/mindos-firecracker*` 移到 `nestos-firecracker*`。目标和旧路径同时存在时会报错停止，需人工确认归属。`install-environment.py` 检测到未迁移的旧安装时会拒绝继续，避免新建空配置覆盖旧数据。
+迁移会把 `/etc/mindos-firecracker` 移到 `/etc/nestos/firecracker`，并移动 `/var/lib/mindos-firecracker`、`/var/lib/mindos-images` 等目录，同步改写配置与 systemd 单元中的旧路径，再把管理 SSH 身份从 `~/.ssh/mindos-firecracker*` 移到 `nestos-firecracker*`。目标和旧路径同时存在时会报错停止，需人工确认归属。`install-environment.py` 检测到未迁移的旧安装时会拒绝继续，避免新建空配置覆盖旧数据。
 
 guest 镜像在改名前的 init 脚本和 systemd 单元里仍使用旧名，因此迁移后必须重新构建并部署 guest OS（`./vmm.sh build --os && ./vmm.sh install`），再新建或升级 VM；旧持久根盘不会自动转换。
 
@@ -73,11 +73,11 @@ guest 镜像在改名前的 init 脚本和 systemd 单元里仍使用旧名，�
 
 ```bash
 ./vmm.sh service update cell-x1 \
-  /etc/nestos-firecracker/service-sources/cells-x1/service.toml \
+  /etc/nestos/firecracker/service-sources/cells-x1/service.toml \
   --identity /home/li/.ssh/nestos-firecracker --enable
 ```
 
-默认根据 VM 已绑定的服务 ID 查找 `/etc/nestos-firecracker/service-sources/<service-id>/service.toml`，管理 SSH 私钥使用调用用户的 `~/.ssh/nestos-firecracker`。例如 VM `cell-x1` 绑定服务 `cells-x1`，读取的就是 `/etc/nestos-firecracker/service-sources/cells-x1/service.toml`。sudo 下仍按原调用用户的家目录查找，带引号的 `~/` 也按该用户展开。找不到默认文件会在停止 VM 前报错，可用显式 manifest 和 `--identity` 指定其他位置。`./vmm.sh service update cell-x1` 为同一入口，不另存用户路径索引。
+默认根据 VM 已绑定的服务 ID 查找 `/etc/nestos/firecracker/service-sources/<service-id>/service.toml`，管理 SSH 私钥使用调用用户的 `~/.ssh/nestos-firecracker`。例如 VM `cell-x1` 绑定服务 `cells-x1`，读取的就是 `/etc/nestos/firecracker/service-sources/cells-x1/service.toml`。sudo 下仍按原调用用户的家目录查找，带引号的 `~/` 也按该用户展开。找不到默认文件会在停止 VM 前报错，可用显式 manifest 和 `--identity` 指定其他位置。`./vmm.sh service update cell-x1` 为同一入口，不另存用户路径索引。
 
 `update` 在停止前快照 manifest、声明文件与管理 SSH 身份并检查服务绑定和持久根盘。它只替换 `files` 声明的文件，不镜像删除目录，不删除根盘；原始 manifest 不会被改写。默认恢复原有开机启用状态，`--enable` 显式启用。它拒绝更换 profile、目录/卷集合及临时根盘；资源环境迁移使用 `environment apply`。失败按 prepare/stop/install/start 阶段报告，不自动重复安装或删除数据。普通 `service install` 仍遵循每个文件的 `overwrite` 设置；`update` 对本次安装快照中的声明文件统一启用覆盖，因此不要把 Session 历史或数据库声明为包内文件。
 
@@ -87,7 +87,7 @@ guest 镜像在改名前的 init 脚本和 systemd 单元里仍使用旧名，�
 ./vmm.sh service status cell-x1
 ./vmm.sh service stop cell-x1
 ./vmm.sh service install \
-  /etc/nestos-firecracker/service-sources/cells-x1/service.toml \
+  /etc/nestos/firecracker/service-sources/cells-x1/service.toml \
   --identity /home/li/.ssh/nestos-firecracker
 ./vmm.sh service start cell-x1
 ./vmm.sh service status cell-x1
@@ -136,7 +136,7 @@ REBUILD_IMAGE=1 IMAGE_SIZE_MIB=8192 ./vmm.sh build --os
 
 `smoke` 会启动独立的管理服务实例，运行前需要没有业务 VM 并停止已部署的管理服务；全局宿主锁禁止同时运行两个管理实例。已部署服务的在线网络验收使用后面的 `smoke-network.py`，不需要停止管理服务。
 
-安装位置为 `/usr/local/bin/firecracker-server`、`/usr/local/libexec/fc-hp/`、`/var/lib/nestos-images/`、`/var/lib/nestos-firecracker/`、`/etc/nestos-firecracker/` 和 systemd unit。首次安装生成 0600 的配置和随机 API key，后续安装保留它们。默认授权 `/srv/harness/project` 直通，Codex/Claude/DSH 的配置和 session 使用各自的持久块卷；新建目录归 guest 的 1000:1000 所有，可在配置中改为实际授权目录。未执行 `network` 时默认无网卡。
+安装位置为 `/usr/local/bin/firecracker-server`、`/usr/local/libexec/fc-hp/`、`/var/lib/nestos-images/`、`/var/lib/nestos-firecracker/`、`/etc/nestos/firecracker/` 和 systemd unit。首次安装生成 0600 的配置和随机 API key，后续安装保留它们。默认授权 `/srv/harness/project` 直通，Codex/Claude/DSH 的配置和 session 使用各自的持久块卷；新建目录归 guest 的 1000:1000 所有，可在配置中改为实际授权目录。未执行 `network` 时默认无网卡。
 
 目录扫描也会占用 virtiofsd 的 guest FD 预算；保留 daemon 自带的预算选择机制（默认目标 1,000,000，受宿主限制约束），不再将其固定为 65536。仅调整运行进程的 rlimit 不会更新启动时建立的内部预算；安装服务后需重启 VM，让共享目录连接使用新预算。
 
@@ -154,7 +154,7 @@ REBUILD_IMAGE=1 IMAGE_SIZE_MIB=8192 ./vmm.sh build --os
 ./vmm.sh ssh demo
 ```
 
-该命令构建并部署镜像、initramfs 和服务，备份配置为 `/etc/nestos-firecracker/config.before-shared-root.toml`，将内置 `debian13` profile 切换到共享模式并启动服务。SSH 和网络槽位配置保留。直接配置时，在 profile 中加入：
+该命令构建并部署镜像、initramfs 和服务，备份配置为 `/etc/nestos/firecracker/config.before-shared-root.toml`，将内置 `debian13` profile 切换到共享模式并启动服务。SSH 和网络槽位配置保留。直接配置时，在 profile 中加入：
 
 ```toml
 rootfs_mode = "shared"
@@ -218,7 +218,7 @@ printf 'Backup directory: %s\n' "$cell_upgrade_backup"
 ```bash
 ./vmm.sh service stop cell-x1
 sudo cp -a --reflink=auto /var/lib/nestos-firecracker/roots/cell-x1 "$cell_upgrade_backup/root"
-sudo cp -a /etc/nestos-firecracker "$cell_upgrade_backup/host-config"
+sudo cp -a /etc/nestos/firecracker "$cell_upgrade_backup/host-config"
 sudo cp -a /var/lib/nestos-firecracker/services/packages/cells-x1.json "$cell_upgrade_backup/service-package.json"
 sudo cp -a /var/lib/nestos-firecracker/services/vms/cell-x1.json "$cell_upgrade_backup/service-binding.json"
 sudo diff -qr /var/lib/nestos-firecracker/roots/cell-x1 "$cell_upgrade_backup/root"
@@ -324,9 +324,9 @@ sudo /usr/local/bin/firecracker-server network idle
 
 ## SSH 与网络
 
-运行 `./vmm.sh network` 后，每个 UID 槽位都有独立的 netns、TAP、DHCP/DNS 和 IPv4 出网。默认 guest 地址为 `10.203.0.2`、`10.203.1.2` 等，宿主 veth 使用 `10.204.N.0/30`；地址按 UID 槽位分配，使用 `./vmm.sh ip VM_ID` 查询实际地址。`max_vms` 个槽位自动写入各 profile 的 `network_slots`，原配置备份为 `/etc/nestos-firecracker/config.before-network.toml`。
+运行 `./vmm.sh network` 后，每个 UID 槽位都有独立的 netns、TAP、DHCP/DNS 和 IPv4 出网。默认 guest 地址为 `10.203.0.2`、`10.203.1.2` 等，宿主 veth 使用 `10.204.N.0/30`；地址按 UID 槽位分配，使用 `./vmm.sh ip VM_ID` 查询实际地址。`max_vms` 个槽位自动写入各 profile 的 `network_slots`，原配置备份为 `/etc/nestos/firecracker/config.before-network.toml`。
 
-`nestos-firecracker-network.service` 和 `nestos-firecracker-dns@N.service` 随宿主启动，管理服务在网络/DNS 就绪后启动。配置写入 `/etc/nestos-firecracker/network.json`，支持 `FC_EGRESS_INTERFACE`、逗号分隔的公共 IPv4 `FC_DNS_SERVERS`、不重叠的私有 `/16` `FC_GUEST_NETWORK` / `FC_UPLINK_NETWORK`。网络段与现有路由冲突时拒绝配置。已有不同的网络计划或自定义 `network_slots` 不会被自动覆盖。
+`nestos-firecracker-network.service` 和 `nestos-firecracker-dns@N.service` 随宿主启动，管理服务在网络/DNS 就绪后启动。配置写入 `/etc/nestos/firecracker/network.json`，支持 `FC_EGRESS_INTERFACE`、逗号分隔的公共 IPv4 `FC_DNS_SERVERS`、不重叠的私有 `/16` `FC_GUEST_NETWORK` / `FC_UPLINK_NETWORK`。网络段与现有路由冲突时拒绝配置。已有不同的网络计划或自定义 `network_slots` 不会被自动覆盖。
 
 防火墙只管理 `inet nestos_firecracker` 和 `ip nestos_firecracker_nat` 表及 `mfc-hN` 接口，不清空宿主/Docker 规则。guest 可访问公网 IPv4，阻断宿主服务、其他 VM、RFC1918、link-local/metadata 等目标；DHCP/DNS 仅在各自 TAP 上提供。默认允许宿主直连 guest SSH；LAN/公网应用入站需通过下面的 publish 命令显式开放。IPv6 出网和宿主代理未配置；已有额外防火墙若阻断转发，应由管理员按本机策略放行，脚本不绕过它。
 
@@ -362,7 +362,7 @@ curl http://127.0.0.1:18080
 
 为适配现有 netns 隔离，映射流量会 SNAT 到该槽位的宿主 veth 地址 `10.204.N.1`，guest 应用看到的是这个地址，不保留原始客户端 IP。新映射会定向清理此前访问该宿主端口产生的连接跟踪，避免旧 UDP socket 绕过新 DNAT。仅修改本服务拥有的 nftables 表/链，不清空其他软件的防火墙表；用于发布流量的 conntrack mark 前缀 `0xfc000000/0xff000000` 由本服务保留。
 
-现有安装升级到这一版本时，先结束活动 VM，再运行 `./vmm.sh network`，以部署 helper、conntrack 依赖和新增的 nftables 链。该命令把 `port_publisher = "/usr/local/libexec/nestos-firecracker/publish-ports"` 写入部署配置；已有配置的备份为 `/etc/nestos-firecracker/config.before-publish.toml`。之后发布/撤销映射无需重启网络或 VM。
+现有安装升级到这一版本时，先结束活动 VM，再运行 `./vmm.sh network`，以部署 helper、conntrack 依赖和新增的 nftables 链。该命令把 `port_publisher = "/usr/local/libexec/nestos-firecracker/publish-ports"` 写入部署配置；已有配置的备份为 `/etc/nestos/firecracker/config.before-publish.toml`。之后发布/撤销映射无需重启网络或 VM。
 
 相关网络命令和配置的区别如下：
 
@@ -388,7 +388,7 @@ Firecracker 自身仍只提供 virtio-net/TAP，端口发布属于本服务的�
 # 在 root shell 中读入私有 key，避免把密钥写入命令历史。
 sudo -i
 set -a
-. /etc/nestos-firecracker/environment
+. /etc/nestos/firecracker/environment
 set +a
 curl -fsS -H "Authorization: Bearer $FIRECRACKER_API_KEY" \
   -H 'Content-Type: application/json' http://127.0.0.1:8790/v1/vms \
@@ -467,10 +467,10 @@ C4Component
 bash scripts/build-debian13.sh /path/to/debian13.ext4 4096
 cargo build --release --locked
 sudo install -m 0755 target/release/firecracker-server /usr/local/bin/firecracker-server
-sudo install -d -m 0700 /var/lib/nestos-firecracker /var/lib/nestos-images /etc/nestos-firecracker
+sudo install -d -m 0700 /var/lib/nestos-firecracker /var/lib/nestos-images /etc/nestos/firecracker
 sudo install -m 0644 /path/to/vmlinux /var/lib/nestos-images/vmlinux
 sudo install -m 0600 /path/to/debian13.ext4 /var/lib/nestos-images/debian13.ext4
-sudo install -m 0600 config.example.toml /etc/nestos-firecracker/config.toml
+sudo install -m 0600 config.example.toml /etc/nestos/firecracker/config.toml
 ```
 
 下载较慢时可通过 `DEBIAN_MIRROR` 和 `DEBIAN_SECURITY_MIRROR` 选择可访问的 Debian 镜像；APT 的签名验证保持启用。镜像中的 DNS 链接在容器导出后建立，避免修改 Docker 管理的 resolv.conf 挂载点。
@@ -503,10 +503,10 @@ exec /usr/local/bin/codex app-server
 ```bash
 # Generate a private >=32-character key, and provide it through the environment.
 export FIRECRACKER_API_KEY='<private-random-key>'
-sudo --preserve-env=FIRECRACKER_API_KEY /usr/local/bin/firecracker-server serve /etc/nestos-firecracker/config.toml
+sudo --preserve-env=FIRECRACKER_API_KEY /usr/local/bin/firecracker-server serve /etc/nestos/firecracker/config.toml
 ```
 
-长期运行可使用提供的 systemd unit。将密钥放在 root:root 0600 的 `/etc/nestos-firecracker/environment`，以 `FIRECRACKER_API_KEY=...` 配置；`KillMode=control-group` 提供额外的进程回收边界。
+长期运行可使用提供的 systemd unit。将密钥放在 root:root 0600 的 `/etc/nestos/firecracker/environment`，以 `FIRECRACKER_API_KEY=...` 配置；`KillMode=control-group` 提供额外的进程回收边界。
 
 ```bash
 curl -fsS -H "Authorization: Bearer $FIRECRACKER_API_KEY" \
@@ -572,7 +572,7 @@ curl -fsS -H "Authorization: Bearer $FIRECRACKER_API_KEY" \
 
 ```bash
 sudo /usr/local/bin/firecracker-server network idle
-sudoedit /etc/nestos-firecracker/config.toml
+sudoedit /etc/nestos/firecracker/config.toml
 ```
 
 将现有 `[bindings.project]` 改为以下内容：

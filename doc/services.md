@@ -115,7 +115,7 @@ curl http://127.0.0.1:18080
 
 `{service_dir}` 可用于命令参数与环境变量，展开为 `/home/agent/.local/share/firecracker-services/SERVICE_ID`。单个包最多 64 个文件、总计 32 MiB；更大的程序可通过授权直通目录读取。文件默认仅在目标不存在时投递；guest 内已有文件（包括升级前已存在、没有部署记录的文件）原样保留，重启不会覆盖用户编辑。缺失文件会补回，不执行目录镜像删除。显式设置 `overwrite = true` 的文件在每次准备/启动时以宿主快照覆盖；默认是 `false`，适用于在 guest 内维护的配置。
 
-`./vmm.sh update VM`（兼容 `./vmm.sh service update VM`）是源码脚本提供的单命令配置更新。根据 VM 已绑定的服务 ID 读取 `/etc/nestos-firecracker/service-sources/<service-id>/service.toml`，使用调用用户的 `~/.ssh/nestos-firecracker`；sudo 不改变调用用户的 home 解析。无需额外路径索引。可用 `service update VM SOURCE/service.toml --identity KEY [--enable]` 显式覆盖路径，找不到默认文件时在停机前明确报错。它先建立私有源快照、检查服务 ID、持久根盘和存储布局，再调用既有 stop/install/up 固定命令。仅本次服务包中声明的文件设置 overwrite，不修改原 manifest，不删除其他文件、Session 或根盘。失败保留已完成阶段，不自动重放；修复原因后可显式重新执行。旧版安装的 Rust 管理 CLI 也可复用这条脚本入口，无需重启全局 Firecracker 管理服务。验证：`python3 scripts/test-update-service.py`（测试进程置于 temporary-process 作用域）。
+`./vmm.sh update VM`（兼容 `./vmm.sh service update VM`）是源码脚本提供的单命令配置更新。根据 VM 已绑定的服务 ID 读取 `/etc/nestos/firecracker/service-sources/<service-id>/service.toml`，使用调用用户的 `~/.ssh/nestos-firecracker`；sudo 不改变调用用户的 home 解析。无需额外路径索引。可用 `service update VM SOURCE/service.toml --identity KEY [--enable]` 显式覆盖路径，找不到默认文件时在停机前明确报错。它先建立私有源快照、检查服务 ID、持久根盘和存储布局，再调用既有 stop/install/up 固定命令。仅本次服务包中声明的文件设置 overwrite，不修改原 manifest，不删除其他文件、Session 或根盘。失败保留已完成阶段，不自动重放；修复原因后可显式重新执行。旧版安装的 Rust 管理 CLI 也可复用这条脚本入口，无需重启全局 Firecracker 管理服务。验证：`python3 scripts/test-update-service.py`（测试进程置于 temporary-process 作用域）。
 
 安装将文件与 SSH 私钥快照保存到宿主 `/var/lib/nestos-firecracker/services/packages/`，权限由私有根目录和 0600 文件约束；后续启动不依赖原始服务包或用户的 SSH 私钥路径。更新宿主服务包不会自动覆盖 guest 已有文件；需要宿主管理某个文件时，在它的 `[[files]]` 中显式声明 `overwrite = true` 后重新安装服务包。同 ID 同内容重复安装幂等；更新包要求所有绑定 VM 的监督服务均停止。profile、挂载等存储变更仍受持久根盘兼容检查限制。服务包和业务凭据不应提交到仓库。
 
@@ -135,7 +135,7 @@ rootfs:
   persistent: true
   user: agent
 service:
-  manifest: /etc/nestos-firecracker/service-sources/cells-x1/service.toml
+  manifest: /etc/nestos/firecracker/service-sources/cells-x1/service.toml
   identity_file: /home/li/.ssh/nestos-firecracker
 git:
   user:
@@ -230,7 +230,7 @@ sudo /usr/local/bin/firecracker-server service destroy web-demo
 
 ## 按 VM 选择代理
 
-管理员在 `/etc/nestos-firecracker/config.toml` 顶层配置 helper 和代理定义：
+管理员在 `/etc/nestos/firecracker/config.toml` 顶层配置 helper 和代理定义：
 
 ```toml
 proxy_egress = "/usr/local/libexec/nestos-firecracker/proxy-egress"

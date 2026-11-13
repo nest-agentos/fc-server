@@ -12,7 +12,7 @@ import tomllib
 SPEC = spec_from_file_location('installer', Path(__file__).with_name('install-environment.py'))
 installer = module_from_spec(SPEC)
 SPEC.loader.exec_module(installer)
-CONFIG = Path('/etc/nestos-firecracker/config.toml')
+CONFIG = Path('/etc/nestos/firecracker/config.toml')
 
 
 def updated(text, name):
