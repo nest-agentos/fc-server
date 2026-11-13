@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
+import tempfile
 
 
 def probe(program):
@@ -25,7 +26,8 @@ def main():
     assert Path('/usr/lib/systemd/systemd').is_file(), 'missing systemd PID 1'
     assert not shutil.which('npm'), 'npm must stay in the build stage'
     packages = subprocess.check_output(['dpkg-query', '-W', '-f=${Package}\n'], text=True).splitlines()
-    assert not any(name.endswith('-dev') for name in packages), 'development packages in runtime image'
+    if flavor == 'base':
+        assert not any(name.endswith('-dev') for name in packages), 'development packages in base image'
     for unit in ('apt-daily.timer', 'apt-daily-upgrade.timer', 'dpkg-db-backup.timer',
                  'fstrim.timer', 'systemd-networkd-wait-online.service'):
         path = Path('/etc/systemd/system') / unit
@@ -34,6 +36,13 @@ def main():
     for program in ('git', 'git-lfs'):
         evidence['runtimes'][program] = probe(program)
     if flavor == 'harness':
+        for program in ('make', 'c++', 'pkg-config'):
+            evidence['runtimes'][program] = probe(program)
+        with tempfile.TemporaryDirectory(prefix='native-build-') as directory:
+            source, binary = Path(directory) / 'probe.cc', Path(directory) / 'probe'
+            source.write_text('#include <pty.h>\n#include <unistd.h>\nint main(){int m,s;if(openpty(&m,&s,nullptr,nullptr,nullptr))return 1;close(m);close(s);return 0;}\n')
+            subprocess.run(['c++', str(source), '-lutil', '-o', str(binary)], check=True, timeout=30)
+            subprocess.run([str(binary)], check=True, timeout=10)
         for program in ('node', 'codex', 'claude', 'dsh'):
             evidence['runtimes'][program] = probe(program)
     print(json.dumps(evidence))

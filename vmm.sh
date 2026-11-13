@@ -43,7 +43,7 @@ Environment:
   KERNEL_IMAGE       With --os, use an existing compatible vmlinux instead of compiling.
   KERNEL_MIRROR      Kernel archive directory URL (default: kernel.org v6.x).
   VIRTIOFSD          Use an existing Rust virtiofsd advertising statx in --print-capabilities.
-  IMAGE_SIZE_MIB     New Debian root disk size (default: 2048).
+  IMAGE_SIZE_MIB     New Debian root disk size (default: 4096).
   GUEST_FLAVOR       harness (pinned Codex/Claude Code/DSH) or base (no Node/tools).
   NPM_REGISTRY       Registry used in the build stage; npm is absent at runtime.
   NODE_IMAGE         Pinned Node build image (default: node:26.13.0-trixie-slim).
@@ -82,7 +82,7 @@ init() {
     server_target=$(realpath -m -- "$server_target")
     jobs=${JOBS:-8}
     [[ $jobs =~ ^[1-9][0-9]*$ ]] || die 'JOBS must be a positive integer'
-    local image_size=${IMAGE_SIZE_MIB:-2048}
+    local image_size=${IMAGE_SIZE_MIB:-4096}
     [[ $image_size =~ ^[0-9]+$ && $image_size -ge 1024 && $image_size -le 65536 ]] || \
         die 'IMAGE_SIZE_MIB must be 1024..65536'
     [[ ${REBUILD_IMAGE:-0} == 0 || ${REBUILD_IMAGE:-0} == 1 ]] || die 'REBUILD_IMAGE must be 0 or 1'
@@ -202,7 +202,7 @@ build_image() {
     stage=debian-image
     local image=$build_dir/images/debian13.ext4
     local inputs
-    inputs=$(python3 "$root/scripts/image-info.py" inputs "$root" "${IMAGE_SIZE_MIB:-2048}" "${GUEST_FLAVOR:-harness}")
+    inputs=$(python3 "$root/scripts/image-info.py" inputs "$root" "${IMAGE_SIZE_MIB:-4096}" "${GUEST_FLAVOR:-harness}")
     if [[ -f $image && -f $image.initrd && -f $image.inputs.json && ${REBUILD_IMAGE:-0} != 1 ]] && \
         cmp -s <(printf '%s\n' "$inputs") "$image.inputs.json"; then
         log "reuse $image; recipe/options match"
@@ -210,7 +210,7 @@ build_image() {
     fi
     local pending
     pending=$(mktemp -d "$build_dir/images/pending.XXXXXXXX")
-    bash "$root/scripts/build-debian13.sh" "$pending/debian13.ext4" "${IMAGE_SIZE_MIB:-2048}"
+    bash "$root/scripts/build-debian13.sh" "$pending/debian13.ext4" "${IMAGE_SIZE_MIB:-4096}"
     local suffix
     for suffix in '' .json .inputs.json .initrd; do
         mv -f -- "$pending/debian13.ext4$suffix" "$image$suffix"

@@ -88,7 +88,7 @@ Git 提交身份、GitHub 密钥和用户 rootfs 的初始化统一使用私有 
 
 `service install` 只安装服务包，不更新 Debian 系统包、Node 或镜像。`fd`（`fd-find`）、`rg`（`ripgrep`）、`vim` 等工具由 `guest/Dockerfile` 的 APT 安装步骤提供。镜像配方变化需通过 `./vmm.sh build --os` 构建、部署；已有持久根盘仍固定使用原基础镜像，采用新系统版本需要单独升级该 VM，或迁移到新根盘，停止再启动不会自动升级。详见[持久根盘与服务管理](doc/services.md)。
 
-`build --os` 的完整构建包含服务 release、fork 指定 toolchain 的 musl Firecracker/jailer、Rust virtiofsd、内建 virtio-fs/vsock/ext4/i8042 的 Linux 6.18.54 内核，以及默认 **2048 MiB（2 GiB）** 的 Debian testing 根盘。默认 `GUEST_FLAVOR=harness` 预装 Codex、Claude Code、DSH；`GUEST_FLAVOR=base` 只构建精简基础系统。内核源码由 kernel.org 下载，校验脚本固定的 SHA-256；制品哈希写入 `build/SHA256SUMS`。virtiofsd 从校验 SHA-256 的固定 1.14.0 源码构建，并应用 `patches/virtiofsd-statx.patch`，支持 FUSE 7.39 `STATX`，透传宿主实际提供的创建时间；包含 UID/GID 映射、文件句柄校验和只读模式转发。构建按补丁/脚本及二进制摘要复用缓存，不自动选用未修补的系统 daemon。内核配置以 fork 自带的 6.18 microVM 配置为基础，显式启用直通与正常关闭所需选项，并关闭 `CONFIG_FUSE_DAX`：该分支没有 DAX shared-memory region，开启时 guest virtio-fs 探测会失败。
+`build --os` 的完整构建包含服务 release、fork 指定 toolchain 的 musl Firecracker/jailer、Rust virtiofsd、内建 virtio-fs/vsock/ext4/i8042 的 Linux 6.18.54 内核，以及默认 **4096 MiB（4 GiB）** 的 Debian testing 根盘。默认 `GUEST_FLAVOR=harness` 预装 Codex、Claude Code、DSH；`GUEST_FLAVOR=base` 只构建精简基础系统。内核源码由 kernel.org 下载，校验脚本固定的 SHA-256；制品哈希写入 `build/SHA256SUMS`。virtiofsd 从校验 SHA-256 的固定 1.14.0 源码构建，并应用 `patches/virtiofsd-statx.patch`，支持 FUSE 7.39 `STATX`，透传宿主实际提供的创建时间；包含 UID/GID 映射、文件句柄校验和只读模式转发。构建按补丁/脚本及二进制摘要复用缓存，不自动选用未修补的系统 daemon。内核配置以 fork 自带的 6.18 microVM 配置为基础，显式启用直通与正常关闭所需选项，并关闭 `CONFIG_FUSE_DAX`：该分支没有 DAX shared-memory region，开启时 guest virtio-fs 探测会失败。
 
 运行镜像基于 `debian:testing-slim`，从 testing 安装 Git 等系统包，以支持协调工作区使用的相对 worktree。现有 `debian13` profile、脚本和制品文件名保留为兼容标识，不表示镜像仍使用 Debian 13 软件源。Node 构建阶段继续使用已锁定的版本镜像，最终运行系统为 testing。
 
@@ -449,7 +449,7 @@ C4Component
 构建需要 Docker、sudo 和 e2fsprogs。构建过程导出 Debian 13 容器用户态，使用 `mkfs.ext4 -d` 生成镜像，不把 guest 文件系统挂载到宿主内核。内核单独提供，必须支持 Firecracker virtio-blk、virtio-vsock、ext4、devtmpfs，以及 systemd 所需的 cgroups、namespaces 等功能；根盘驱动需编入内核。私有副本模式直接启动；共享模式使用构建生成的 initramfs，并额外需要内建 PMEM、FS_DAX 和 OverlayFS。virtio-fs 模式还需内建 `CONFIG_FUSE_FS`、`CONFIG_VIRTIO_FS`、`CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES`，并关闭 `CONFIG_FUSE_DAX`。
 
 ```bash
-bash scripts/build-debian13.sh /path/to/debian13.ext4 2048
+bash scripts/build-debian13.sh /path/to/debian13.ext4 4096
 cargo build --release --locked
 sudo install -m 0755 target/release/firecracker-server /usr/local/bin/firecracker-server
 sudo install -d -m 0700 /var/lib/mindos-firecracker /var/lib/mindos-images /etc/mindos-firecracker
@@ -463,6 +463,8 @@ sudo install -m 0600 config.example.toml /etc/mindos-firecracker/config.toml
 构建临时目录默认放在 `/var/tmp`，可用 `TMPDIR` 覆盖。导出后删除 Docker 容器标记，确保 systemd 按 KVM guest 执行卸载/落盘。CtrlAltDel 使用正常 reboot 流程和 `reboot=k` 触发 Firecracker 退出；在本配置的 `acpi=off` 下，poweroff 会停在内核 halt，不能据此判定 VMM 已退出。
 
 编辑配置中的目录 source，提前创建源目录；目录中文件 UID/GID 保留，guest 的 `agent` 为 1000:1000。权限不匹配时应在可信源中准备正确权限，而不是放宽宿主访问。构建脚本跟随 Debian 13 的更新标签，不宣称镜像位级可复现；需要固定制品时记录基础镜像 digest、包版本和产物 SHA-256。
+
+`harness` 镜像同时提供 `build-essential`、`pkg-config` 和 Python 3，支持 Node 原生依赖（包括 Linux `node-pty`）本机编译；离线镜像检查以 agent 用户实际编译并运行 PTY 探针。`base` 镜像继续保持无开发包。镜像配方更新不会自动改变已保留的 cell-x1 根盘，升级按上面的备份迁移流程执行。
 
 两种镜像都提供 7000 端口的非 root Bash 字节流，用于验证和通用命令执行；`harness` 版已预装三个运行时，`base` 版不带它们。需要直接暴露原生服务协议时，将固定入口写入 `/usr/local/libexec/harness-PORT`，启用 `harness-vsock@PORT.service`，再在 profile 中授权该端口。运行时参数和凭据由可信镜像/配置卷管理，不从 VMM 管理 API 透传任意宿主执行。
 

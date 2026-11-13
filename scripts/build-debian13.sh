@@ -2,7 +2,7 @@
 set -euo pipefail
 # Export Debian userspace without mounting a guest-controlled filesystem on host.
 output=${1:?usage: build-debian13.sh OUTPUT.ext4 [SIZE_MIB]}
-size_mib=${2:-2048}
+size_mib=${2:-4096}
 flavor=${GUEST_FLAVOR:-harness}
 [[ $flavor == base || $flavor == harness ]] || { echo 'GUEST_FLAVOR must be base or harness' >&2; exit 1; }
 [[ $size_mib =~ ^[0-9]+$ && $size_mib -ge 1024 && $size_mib -le 65536 ]] || {

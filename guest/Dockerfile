@@ -35,6 +35,9 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 CMD ["/sbin/init"]
 
 FROM base AS harness
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential pkg-config \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 ENV DISABLE_AUTOUPDATER=1
 COPY --from=runtime-builder /usr/local/bin/node /usr/local/bin/node
 COPY --from=runtime-builder /opt/harness /opt/harness
